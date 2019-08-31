@@ -1,5 +1,7 @@
-#ifndef TDL_INCLUDE_IR_MODULE_H
-#define TDL_INCLUDE_IR_MODULE_H
+#pragma once
+
+#ifndef _TRITON_IR_MODULE_H_
+#define _TRITON_IR_MODULE_H_
 
 #include <map>
 #include <set>
@@ -7,6 +9,7 @@
 #include <string>
 #include <functional>
 #include "builder.h"
+#include "metadata.h"
 
 namespace triton{
 
@@ -33,11 +36,13 @@ class alloc_const;
 /* Module */
 struct scope {
   std::map<std::string, ir::type*> types;
+  std::map<std::string, ir::value*> values;
 };
 
 class module {
   typedef std::pair<std::string, basic_block*> val_key_t;
   friend class function;
+  typedef std::pair<ir::metadata::kind_t, unsigned> md_pair_t;
 
 public:
   typedef std::map<std::string, global_value*> symbols_map_t;
@@ -84,6 +89,8 @@ public:
   // Register global
   void register_global(const std::string& name, ir::value *x) { globals_[name] = x; }
   const std::map<std::string, ir::value*>& globals() const    { return globals_; }
+  // Metadata
+  void add_metadata(const std::string &name, md_pair_t x)     { metadatas_[name] = x; }
 
 private:
   std::string name_;
@@ -101,6 +108,7 @@ private:
   std::stack<scope> scopes_;
   std::vector<ir::alloc_const*> allocs_;
   std::map<std::string, ir::value*> globals_;
+  std::map<std::string, md_pair_t> metadatas_;
 };
 
 }

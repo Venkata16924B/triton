@@ -1,14 +1,22 @@
-#ifndef TDL_INCLUDE_IR_INSTRUCTIONS_H
-#define TDL_INCLUDE_IR_INSTRUCTIONS_H
+#pragma once
+
+#ifndef _TRITON_IR_INSTRUCTIONS_H_
+#define _TRITON_IR_INSTRUCTIONS_H_
 
 #include <vector>
-#include "value.h"
+#include <map>
+#include "triton/ir/enums.h"
+#include "triton/ir/constant.h"
+#include "triton/ir/value.h"
 #include "triton/ir/type.h"
-#include "llvm/IR/Instructions.h"
+#include "triton/ir/metadata.h"
 
 namespace triton{
 namespace ir{
 
+class constant_int;
+class constant;
+class constant_range;
 class basic_block;
 class context;
 
@@ -19,11 +27,6 @@ class context;
 class result_reference;
 class instruction: public user{
 public:
-  struct mask_info_t {
-    value *pred;
-    value *else_value;
-  };
-
   virtual std::string repr_impl() const = 0;
 
 protected:
@@ -36,11 +39,6 @@ public:
   const basic_block *get_parent() const                       { return parent_;  }
   basic_block *get_parent()                                   { return parent_;  }
   void erase_from_parent();
-  // mask
-  void set_mask_pred(value *pred)                             { resize_hidden(1); set_operand(get_num_operands(), pred); }
-  value* get_mask_pred() const                                { if(get_num_hidden() == 0) return nullptr; return get_operand(get_num_operands()); }
-  void set_mask_else(value *x)                                { resize_hidden(2); set_operand(get_num_operands() + 1, x); }
-  value* get_mask_else() const                                { if(get_num_hidden() < 2) return nullptr; return get_operand(get_num_operands() + 1);  }
   // helpers
   bool has_tile_result_or_op();
   // repr
@@ -48,12 +46,14 @@ public:
   // results
   unsigned get_num_results() const                            { return results_.size(); }
   value* get_result(unsigned i)                               { return results_.at(i); }
-
+  // metadata
+  void set_metadata(ir::metadata::kind_t kind,
+                    unsigned value)                           { metadatas_[kind] = value;}
+  unsigned get_metadata(ir::metadata::kind_t kind)            { return metadatas_[kind];}
 private:
   basic_block *parent_;
-  value *pred_;
-  value *mask_pred_;
   std::vector<value*> results_;
+  std::map<ir::metadata::kind_t, unsigned> metadatas_;
 };
 
 // result reference
@@ -99,22 +99,20 @@ private:
 //===----------------------------------------------------------------------===//
 //                               binary_operator classes
 //===----------------------------------------------------------------------===//
-
 class binary_operator: public instruction{
 public:
-  typedef llvm::BinaryOperator::BinaryOps op_t;
-  using llop = llvm::BinaryOperator::BinaryOps;
+  typedef binary_op_t op_t;
 
 private:
   std::string repr_impl() const;
 
 protected:
   // Constructors
-  binary_operator(op_t op, value *lhs, value *rhs, type *ty, const std::string &name, instruction *next);
+  binary_operator(binary_op_t op, value *lhs, value *rhs, type *ty, const std::string &name, instruction *next);
 
 public:
   // Get operand
-  op_t get_op() const { return op_; }
+  binary_op_t get_op() const { return op_; }
 
   // Bool
   bool is_terminator()  const;
@@ -122,20 +120,26 @@ public:
   bool is_int_div_rem() const;
   bool is_shift()       const;
   bool is_cast()        const;
+  bool is_int_mult()    const;
+  bool is_int_add_sub() const;
+  bool is_int_div()     const;
+  bool is_int_rem()     const;
+  bool is_shl()         const;
+  bool is_shr()         const;
 
   // Wraps
   void set_has_no_unsigned_wrap(bool b = true) { has_no_unsigned_wrap_ = b; }
   void set_has_no_signed_wrap(bool b = true)   { has_no_signed_wrap_ = b; }
 
   // Factory methods
-  static binary_operator *create(op_t op, value *lhs, value *rhs,
+  static binary_operator *create(binary_op_t op, value *lhs, value *rhs,
                                  const std::string &name = "", instruction *next = nullptr);
   static binary_operator *create_fneg(value *arg, const std::string &name = "", instruction *next = nullptr);
   static binary_operator *create_neg(value *arg, const std::string &name = "", instruction *next = nullptr);
   static binary_operator *create_not(value *arg, const std::string &name = "", instruction *next = nullptr);
 
 public:
-  op_t op_;
+  binary_op_t op_;
   bool has_no_unsigned_wrap_;
   bool has_no_signed_wrap_;
 };
@@ -147,30 +151,28 @@ public:
 
 class cmp_inst: public instruction{
 public:
-  typedef llvm::CmpInst::Predicate pred_t;
-  using llop = llvm::CmpInst;
-
+  typedef cmp_pred_t pred_t;
 private:
   std::string repr_impl() const;
 
 protected:
-  cmp_inst(type *ty, pred_t pred, value *lhs, value *rhs, const std::string &name, instruction *next);
-  static bool is_fp_predicate(pred_t pred);
-  static bool is_int_predicate(pred_t pred);
+  cmp_inst(type *ty, cmp_pred_t pred, value *lhs, value *rhs, const std::string &name, instruction *next);
+  static bool is_fp_predicate(cmp_pred_t pred);
+  static bool is_int_predicate(cmp_pred_t pred);
   static type* make_cmp_result_type(type *ty);
 
 public:
-  pred_t get_pred() const { return pred_; }
+  cmp_pred_t get_pred() const { return pred_; }
 
 private:
-  pred_t pred_;
+  cmp_pred_t pred_;
 };
 
 class icmp_inst: public cmp_inst{
   using cmp_inst::cmp_inst;
 
 public:
-  static icmp_inst* create(pred_t pred, value *lhs, value *rhs,
+  static icmp_inst* create(cmp_pred_t pred, value *lhs, value *rhs,
                     const std::string &name = "", instruction *next = nullptr);
 };
 
@@ -178,7 +180,7 @@ class fcmp_inst: public cmp_inst{
   using cmp_inst::cmp_inst;
 
 public:
-  static fcmp_inst* create(pred_t pred, value *lhs, value *rhs,
+  static fcmp_inst* create(cmp_pred_t pred, value *lhs, value *rhs,
                     const std::string &name = "", instruction *next = nullptr);
 };
 
@@ -197,55 +199,50 @@ protected:
 //===----------------------------------------------------------------------===//
 
 class cast_inst: public unary_inst{
-  using ic = llvm::Instruction::CastOps;
-
 private:
   std::string repr_impl() const;
 
-public:
-  typedef llvm::CastInst::CastOps op_t;
-
 protected:
-  cast_inst(type *ty, value *v, const std::string &name, instruction *next, op_t op)
+  cast_inst(type *ty, value *v, const std::string &name, instruction *next, cast_op_t op)
     : unary_inst(ty, v, name, next), op_(op) { }
 
 private:
-  static bool is_valid(op_t op, value *arg, type *ty);
+  static bool is_valid(cast_op_t op, value *arg, type *ty);
 
 public:
   // accessors
-  op_t get_op() const { return op_; }
+  cast_op_t get_op() const { return op_; }
 
   // factory methods
-  static cast_inst *create(op_t op, value *arg, type *ty,
+  static cast_inst *create(cast_op_t op, value *arg, type *ty,
                            const std::string &name = "", instruction *next = nullptr);
   static cast_inst *create_integer_cast(value *arg, type *ty, bool is_signed,
                            const std::string &name = "", instruction *next = nullptr);
 
 private:
-  op_t op_;
+  cast_op_t op_;
 };
 
-#define TDL_IR_DECLARE_CAST_INST_SIMPLE(name, op) \
+#define TRITON_IR_DECLARE_CAST_INST_SIMPL(name, op) \
 class name : public cast_inst{ \
   friend class cast_inst; \
   name(type *ty, value *v, const std::string &name, instruction *next) \
     : cast_inst(ty, v, name, next, op){ } \
 };
 
-TDL_IR_DECLARE_CAST_INST_SIMPLE(trunc_inst, llvm::Instruction::CastOps::Trunc)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(z_ext_inst, llvm::Instruction::CastOps::ZExt)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(s_ext_inst, llvm::Instruction::CastOps::SExt)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(fp_trunc_inst, llvm::Instruction::CastOps::FPTrunc)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(fp_ext_inst, llvm::Instruction::CastOps::FPExt)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(ui_to_fp_inst, llvm::Instruction::CastOps::UIToFP)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(si_to_fp_inst, llvm::Instruction::CastOps::SIToFP)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(fp_to_ui_inst, llvm::Instruction::CastOps::FPToUI)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(fp_to_si_inst, llvm::Instruction::CastOps::FPToSI)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(ptr_to_int_inst, llvm::Instruction::CastOps::PtrToInt)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(int_to_ptr_inst, llvm::Instruction::CastOps::IntToPtr)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(bit_cast_inst, llvm::Instruction::CastOps::BitCast)
-TDL_IR_DECLARE_CAST_INST_SIMPLE(addr_space_cast_inst, llvm::Instruction::CastOps::AddrSpaceCast)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(trunc_inst, cast_op_t::Trunc)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(z_ext_inst, cast_op_t::ZExt)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(s_ext_inst, cast_op_t::SExt)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(fp_trunc_inst, cast_op_t::FPTrunc)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(fp_ext_inst, cast_op_t::FPExt)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(ui_to_fp_inst, cast_op_t::UIToFP)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(si_to_fp_inst, cast_op_t::SIToFP)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(fp_to_ui_inst, cast_op_t::FPToUI)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(fp_to_si_inst, cast_op_t::FPToSI)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(ptr_to_int_inst, cast_op_t::PtrToInt)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(int_to_ptr_inst, cast_op_t::IntToPtr)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(bit_cast_inst, cast_op_t::BitCast)
+TRITON_IR_DECLARE_CAST_INST_SIMPL(addr_space_cast_inst, cast_op_t::AddrSpaceCast)
 
 //===----------------------------------------------------------------------===//
 //                               terminator_inst classes
@@ -312,7 +309,7 @@ public:
 // ternary
 class ternary_inst: public instruction {
 private:
-  std::string repr_impl() const { return "ternary"; }
+  std::string repr_impl() const { return "cond"; }
   ternary_inst(value *cond, value *true_value, value *false_value,
                const std::string &name, instruction *next);
 
@@ -322,35 +319,6 @@ public:
   value *get_false_value() { return get_operand(2); }
   static ternary_inst* create(value *cond, value *true_value, value *false_value,
                               const std::string &name = "", instruction *next = nullptr);
-};
-
-// mask
-class mask_inst: public instruction {
-private:
-  std::string repr_impl() const { return "mask"; }
-  mask_inst(ir::value *pred, const std::string &name, instruction *next);
-
-public:
-  static mask_inst* create(ir::value *pred, const std::string &name = "", instruction *next = nullptr);
-};
-
-// merge
-class psi_inst: public instruction {
-private:
-  std::string repr_impl() const { return "merge"; }
-  psi_inst(ir::value *mask_true, ir::value *value_true,
-             ir::value *mask_false, ir::value *value_false,
-             const std::string &name, instruction *next);
-
-public:
-  static psi_inst* create(ir::value *mask_true, ir::value *value_true,
-                            ir::value *mask_false, ir::value *value_false,
-                            const std::string &name = "", instruction *next = nullptr);
-  ir::value *get_mask_true() { return get_operand(0); }
-  ir::value *get_value_true() { return get_operand(1); }
-  ir::value *get_mask_false() { return get_operand(2); }
-  ir::value *get_value_false() { return get_operand(3); }
-
 };
 
 //===----------------------------------------------------------------------===//
@@ -372,6 +340,7 @@ public:
   type *get_source_elt_ty() { return source_elt_ty; }
   op_iterator idx_begin()       { return op_begin() + 1; }
   op_iterator idx_end()         { return op_end(); }
+  value *get_pointer_operand()  { return *op_begin(); }
 
   // factory methods
   static getelementptr_inst* create(value *ptr, const std::vector<value*> &idx,
@@ -386,33 +355,78 @@ private:
 //                          load_inst/store_inst classes
 //===----------------------------------------------------------------------===//
 
-class load_inst: public unary_inst{
-private:
-  std::string repr_impl() const { return "load"; }
-  load_inst(value *ptr, const std::string &name, instruction *next);
+class io_inst: public instruction {
+protected:
+  io_inst(type *ty, unsigned num_ops, unsigned num_results = 1, const std::string &name = "", instruction *next = nullptr);
+public:
+//  value *get_mask() const;
+//  value *get_false_value() const;
+};
+
+class load_inst: public io_inst{
+protected:
+  load_inst(value *ptr, unsigned num_extra_ops, const std::string &name, instruction *next);
 
 private:
+  std::string repr_impl() const { return "load"; }
   static type *get_pointee_type(type *ty);
 
 public:
   // accessors
   value *get_pointer_operand() { return get_operand(0); }
   // factory method
-  static load_inst* create(value *ptr, const std::string &name = "",
+  static load_inst* create(value *ptr,
+                           const std::string &name = "",
                            instruction *next = nullptr);
 };
 
-class store_inst: public instruction{
+class masked_load_inst: public load_inst{
 private:
-  std::string repr_impl() const { return "store"; }
-  store_inst(value *ptr, value *v, const std::string &name, instruction *next);
+  std::string repr_impl() const { return "masked_load"; }
+  masked_load_inst(value *ptr, value *mask, value *false_value,
+                   const std::string &name, instruction *next);
 
 public:
+  // accessors
+  value *get_mask_operand() { return get_operand(1); }
+  value *get_false_value_operand() { return get_operand(2); }
+  // factory method
+  static masked_load_inst* create(value *ptr, value *mask, value *false_value,
+                                  const std::string &name = "",
+                                  instruction *next = nullptr);
+};
+
+class store_inst: public io_inst{
+protected:
+  store_inst(value *ptr, value *v, unsigned num_extra_ops,
+             const std::string &name, instruction *next);
+
+private:
+  std::string repr_impl() const { return "store"; }
+
+public:
+  // accessors
   value *get_pointer_operand() { return get_operand(0); }
   value *get_value_operand() { return get_operand(1); }
   // factory method
-  static store_inst* create(value* ptr, value *v, const std::string &name = "",
+  static store_inst* create(value* ptr, value *v,
+                            const std::string &name = "",
                             instruction *next = nullptr);
+};
+
+class masked_store_inst: public store_inst{
+private:
+  std::string repr_impl() const { return "masked_store"; }
+  masked_store_inst(value *ptr, value *v, value *mask,
+                    const std::string &name, instruction *next);
+
+public:
+  // accessors
+  value *get_mask_operand() { return get_operand(2); }
+  // factory method
+  static masked_store_inst* create(value *ptr, value *v, value *mask,
+                                   const std::string &name = "",
+                                   instruction *next = nullptr);
 };
 
 //===----------------------------------------------------------------------===//
@@ -424,7 +438,6 @@ public:
 class retile_inst: public unary_inst {
 protected:
   retile_inst(value *arg, const type::tile_shapes_t &shapes, const std::string &name, instruction *next);
-  static std::string shape_suffix(ir::type* ty);
 };
 
 // reshape
@@ -432,7 +445,7 @@ protected:
 class reshape_inst: public retile_inst {
 private:
   using retile_inst::retile_inst;
-  std::string repr_impl() const { return "reshape" + shape_suffix(get_type()); }
+  std::string repr_impl() const { return "reshape"; }
 
 public:
   static instruction* create(value *arg, const type::tile_shapes_t &shape_suffix,
@@ -444,7 +457,7 @@ public:
 class splat_inst: public retile_inst {
 private:
   using retile_inst::retile_inst;
-  std::string repr_impl() const { return "splat" + shape_suffix(get_type()); }
+  std::string repr_impl() const { return "splat"; }
 
 public:
   static instruction* create(value *arg, const type::tile_shapes_t &shape_suffix,
@@ -456,7 +469,7 @@ public:
 class broadcast_inst: public retile_inst {
 private:
   using retile_inst::retile_inst;
-  std::string repr_impl() const { return "broadcast" + shape_suffix(get_type()); }
+  std::string repr_impl() const { return "broadcast"; }
 
 public:
   static instruction* create(value *arg, const type::tile_shapes_t &shape_suffix,
@@ -484,25 +497,23 @@ protected:
   using instruction::instruction;
 };
 
-class get_global_range_inst: public builtin_inst {
+class get_program_id_inst: public builtin_inst {
 private:
-  get_global_range_inst(type *ty, unsigned axis, const std::string &name, instruction *next);
-  std::string repr_impl() const { return "get_global_range(" + std::to_string(axis_) + ")"; }
+  get_program_id_inst(type *ty, unsigned axis, const std::string &name, instruction *next);
+  std::string repr_impl() const { return "get_program_id(" + std::to_string(axis_) + ")"; }
 
 public:
-  static instruction* create(context &ctx, unsigned axis, type::tile_shapes_t::value_type size,
-                             const std::string &name = "",
-                             instruction *next = nullptr);
+  static instruction* create(context &ctx, unsigned axis, const std::string &name = "", instruction *next = nullptr);
   unsigned get_axis() const { return axis_; }
 
 private:
   unsigned axis_;
 };
 
-class get_range_id_inst: public builtin_inst {
+class get_num_program_inst: public builtin_inst {
 private:
-  get_range_id_inst(type *ty, unsigned axis, const std::string &name, instruction *next);
-  std::string repr_impl() const { return "get_range_id(" + std::to_string(axis_) + ")"; }
+  get_num_program_inst(type *ty, unsigned axis, const std::string &name, instruction *next);
+  std::string repr_impl() const { return "get_num_program(" + std::to_string(axis_) + ")"; }
 
 public:
   static instruction* create(context &ctx, unsigned axis, const std::string &name = "", instruction *next = nullptr);
@@ -521,6 +532,24 @@ public:
   static instruction* create(value *ptr, value *cmp, value *val, const std::string &name = "", instruction *next = nullptr);
 };
 
+class atomic_exch_inst: public builtin_inst {
+private:
+  atomic_exch_inst(value *ptr, value *val, const std::string &name = "", instruction *next = nullptr);
+  std::string repr_impl() const { return "atomic_exch"; }
+
+public:
+  static instruction* create(value *ptr, value *val, const std::string &name = "", instruction *next = nullptr);
+};
+
+class atomic_add_inst: public builtin_inst {
+private:
+  atomic_add_inst(value *ptr, value *val, const std::string &name = "", instruction *next = nullptr);
+  std::string repr_impl() const { return "atomic_add"; }
+
+public:
+  static instruction* create(value *ptr, value *val, const std::string &name = "", instruction *next = nullptr);
+};
+
 class dot_inst: public builtin_inst {
 public:
   enum TransT { NoTrans, Trans };
@@ -530,6 +559,7 @@ private:
   std::string repr_impl() const { return std::string("dot.") + ((AT_==NoTrans)?"n":"t") + ((BT_==NoTrans)?"n":"t"); }
 
 public:
+  static instruction *create(value *A, value *B, value *C, bool AT, bool BT, const std::string &name = "", instruction *next = nullptr);
   static instruction* create_nn(value *A, value *B, value *C, const std::string &name = "", instruction *next = nullptr);
   static instruction* create_nt(value *A, value *B, value *C, const std::string &name = "", instruction *next = nullptr);
   static instruction* create_tn(value *A, value *B, value *C, const std::string &name = "", instruction *next = nullptr);
@@ -551,14 +581,49 @@ private:
 
 class trans_inst: public builtin_inst {
 public:
-  ir::type* get_res_ty(ir::type* in);
+  ir::type* get_res_ty(ir::type* in, std::vector<constant_int *> perm);
+  std::vector<constant_int*> init_perm(ir::type* ty, const std::vector<constant_int*>& perm);
 
 private:
-  trans_inst(value *arg, const std::string& name, instruction* next);
-  std::string repr_impl() const { return "trans"; }
+  trans_inst(value *arg, const std::vector<constant_int*>& perm, const std::string& name, instruction* next);
+  std::string repr_impl() const {
+    std::string res = "trans<";
+    //for(ir::constant_int *x: perm_)
+    //  res += x->repr() + ",";
+    res[res.size()-1] = '>';
+    return res;
+  }
 
 public:
+  static instruction* create(value *arg, const std::vector<constant_int*>& perm = {}, const std::string &name = "", instruction *next = nullptr);
+  const std::vector<constant_int*> get_perm() const;
+
+private:
+  std::vector<constant_int*> perm_;
+};
+
+class sqrt_inst: public builtin_inst {
+private:
+  sqrt_inst(value *arg, const std::string& name, instruction* next);
+  std::string repr_impl() const { return "sqrt"; }
+public:
   static instruction* create(value *arg, const std::string &name = "", instruction *next = nullptr);
+};
+
+class reduce_inst: public builtin_inst {
+private:
+  static type* get_res_type(value *arg, unsigned axis);
+
+private:
+  reduce_inst(value* arg, unsigned axis, const std::string& name, instruction* next);
+  std::string repr_impl() const { return "reduce"; }
+
+public:
+  static instruction* create(value *arg, unsigned axis, const std::string &name = "", instruction *next = nullptr);
+  unsigned get_axis() const { return axis_; }
+
+private:
+  unsigned axis_;
 };
 
 class select_inst: public builtin_inst {
@@ -602,6 +667,32 @@ private:
 public:
   static vectorize_inst* create(value *arg, const std::string &name = "", instruction *next = nullptr);
 };
+
+// On NVIDIA, implementation is such that
+// constant_range = nv_dynamic_program_idx + nv_static_program_idx
+// so as to enable re-association on nv_static_program_idx which is constant
+class nv_dynamic_program_idx_inst: public instruction {
+private:
+  nv_dynamic_program_idx_inst(type *ty, const std::string &name, instruction *next);
+  std::string repr_impl() const { return "nv_dynamic_program_idx"; }
+
+public:
+  static nv_dynamic_program_idx_inst* create(type *ty, const std::string &name = "", instruction *next = nullptr);
+};
+
+class nv_static_program_idx: public constant {
+private:
+  nv_static_program_idx(constant_range *range);
+
+public:
+  static nv_static_program_idx *get(constant_range* range);
+  constant_range* get_range() const;
+  std::string repr() const { return get_name(); }
+
+private:
+  constant_range *range_;
+};
+
 
 }
 }

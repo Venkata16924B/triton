@@ -1,20 +1,17 @@
-#ifndef TRITON_INCLUDE_LANG_ERROR_H
-#define TRITON_INCLUDE_LANG_ERROR_H
+#pragma once
 
-#include "parser.hpp"
-
-
-namespace triton{
-namespace lang{
+#ifndef _WGTCC_ERROR_H_
+#define _WGTCC_ERROR_H_
 
 
-void update_location(const char *t);
-void print_error(const char *error);
-char return_impl(char t, const char * yytext);
-yytokentype return_impl(yytokentype t, const char * yytext);
-void return_void(const char * yytext);
+struct SourceLocation;
+class Token;
+class Expr;
 
-}
-}
+
+[[noreturn]] void Error(const char* format, ...);
+[[noreturn]] void Error(const SourceLocation& loc, const char* format, ...);
+[[noreturn]] void Error(const Token* tok, const char* format, ...);
+[[noreturn]] void Error(const Expr* expr, const char* format, ...);
 
 #endif

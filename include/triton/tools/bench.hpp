@@ -1,5 +1,13 @@
-#ifndef TRITON_TOOLS_BENCH_HPP
-#define TRITON_TOOLS_BENCH_HPP
+#pragma once
+
+#ifndef _TRITON_TOOLS_BENCH_H_
+#define _TRITON_TOOLS_BENCH_H_
+
+#include <chrono>
+#include <functional>
+#include <algorithm>
+#include "triton/driver/device.h"
+#include "triton/driver/stream.h"
 
 namespace triton{
 namespace tools{
@@ -22,22 +30,22 @@ private:
     high_resolution_clock::time_point _start;
 };
 
-template<class OP, class SYNC>
-double bench(OP const & op, SYNC const & sync, const triton::driver::device * device)
+inline double bench(std::function<void()> const & op, driver::stream * stream)
 {
+//  const driver::device * device = stream->context()->device();
   timer tmr;
   std::vector<size_t> times;
   double total_time = 0;
   op();
-  sync();
+  stream->synchronize();
   while(total_time*1e-9 < 1e-3){
     float norm = 1;
-    // normalize clock if possible to get roughly constant result
-    if(auto cu_device = dynamic_cast<const triton::driver::cu_device*>(device))
-      norm = (float)cu_device->current_sm_clock()/cu_device->max_sm_clock();
+    // normalize clock if possible to reduce noise in auto-tuning
+//    if(auto cu_device = dynamic_cast<const triton::driver::cu_device*>(stream->context()->device()))
+//      norm = (float)cu_device->current_sm_clock()/cu_device->max_sm_clock();
     tmr.start();
     op();
-    sync();
+    stream->synchronize();
     times.push_back(norm*tmr.get().count());
     total_time+=times.back();
   }

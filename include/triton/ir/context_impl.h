@@ -1,7 +1,8 @@
-#ifndef TDL_INCLUDE_IR_CONTEXT_IMPL_H
-#define TDL_INCLUDE_IR_CONTEXT_IMPL_H
+#pragma once
 
-#include <memory>
+#ifndef _TRITON_IR_CONTEXT_IMPL_H_
+#define _TRITON_IR_CONTEXT_IMPL_H_
+
 #include <map>
 #include "triton/ir/type.h"
 
@@ -9,6 +10,7 @@ namespace triton{
 namespace ir{
 
 class context;
+class constant;
 class constant_int;
 class constant_fp;
 class undef_value;
@@ -31,7 +33,7 @@ public:
   // Int constants
   std::map<std::pair<type*, uint64_t>, constant_int*> int_constants_;
   // Float constants
-  std::map<double, constant_fp*> fp_constants_;
+  std::map<std::pair<type*, double>, constant_fp*> fp_constants_;
   // undef values
   std::map<type*, undef_value*> uv_constants_;
   // Metaparameters

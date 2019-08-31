@@ -1,7 +1,8 @@
-#ifndef TDL_INCLUDE_IR_BUILDER_H
-#define TDL_INCLUDE_IR_BUILDER_H
+#pragma once
 
-#include <iostream>
+#ifndef _TRITON_IR_BUILDER_H_
+#define _TRITON_IR_BUILDER_H_
+
 #include <vector>
 #include <string>
 #include "instructions.h"
@@ -40,6 +41,7 @@ public:
   type *get_int16_ty();
   type *get_int32_ty();
   type *get_int64_ty();
+  type *get_half_ty();
   type *get_float_ty();
   type *get_double_ty();
   // Insert
@@ -49,17 +51,16 @@ public:
     block_->get_inst_list().insert(insert_point_, inst);
     inst->set_parent(block_);
     inst->set_name(name);
+//    for(ir::value* op: inst->ops())
+//      op->add_use(inst);
     return inst;
   }
   // terminator instructions
   value* create_br(basic_block *dest);
   value* create_cond_br(value *cond, basic_block* if_dest, basic_block* else_dest);
   value* create_ret_void();
-  // Tile-level control flow
-  value *create_mask(value *pred, const std::string &name = "");
-  value *create_merge(value *mask_true, value *value_true, value *mask_false, value *value_false, const std::string &name = "");
   // Cast instructions
-  value *create_cast(cast_inst::op_t op, value *v, type *dst_ty, const std::string &name = "");
+  value *create_cast(cast_op_t op, value *v, type *dst_ty, const std::string &name = "");
   value* create_si_to_fp(value *src, type *dst_ty, const std::string &name = "");
   value* create_ui_to_fp(value *src, type *dst_ty, const std::string &name = "");
   value* create_fp_to_si(value *src, type *dst_ty, const std::string &name = "");
@@ -71,7 +72,7 @@ public:
   // Phi instruction
   phi_node* create_phi(type *ty, unsigned num_reserved, const std::string &name = "");
   // Binary instructions
-  value *create_insert_nuwnswb_binop(binary_operator::op_t op, value *lhs, value *rhs, const std::string &name, bool has_nuw, bool has_nsw);
+  value *create_insert_nuwnswb_binop(binary_op_t op, value *lhs, value *rhs, const std::string &name, bool has_nuw, bool has_nsw);
   value *create_fmul(value *lhs, value *rhs, const std::string &name = "");
   value *create_fdiv(value *lhs, value *rhs, const std::string &name = "");
   value *create_frem(value *lhs, value *rhs, const std::string &name = "");
@@ -85,11 +86,12 @@ public:
   value *create_add(value *lhs, value *rhs, const std::string &name = "", bool has_nuw = false, bool has_nsw = false);
   value *create_sub(value *lhs, value *rhs, const std::string &name = "", bool has_nuw = false, bool has_nsw = false);
   value *create_shl(value *lhs, value *rhs, const std::string &name = "", bool has_nuw = false, bool has_nsw = false);
+  value *create_lshr(value *lhs, value *rhs, const std::string &name = "", bool has_nuw = false, bool has_nsw = false);
   value *create_ashr(value *lhs, value *rhs, const std::string &name = "", bool has_nuw = false, bool has_nsw = false);
   // GEP
   value *create_gep(value *ptr, const std::vector<value*>& idx_list, const std::string &name = "");
   // Comparison (int)
-  value *create_icmp(cmp_inst::pred_t pred, value *lhs, value *rhs, const std::string &name = "");
+  value *create_icmp(cmp_pred_t pred, value *lhs, value *rhs, const std::string &name = "");
   value *create_icmpSLE(value *lhs, value *rhs, const std::string &name = "");
   value *create_icmpSLT(value *lhs, value *rhs, const std::string &name = "");
   value *create_icmpSGE(value *lhs, value *rhs, const std::string &name = "");
@@ -101,7 +103,7 @@ public:
   value *create_icmpEQ(value *lhs, value *rhs, const std::string &name = "");
   value *create_icmpNE(value *lhs, value *rhs, const std::string &name = "");
   // Comparison (float)
-  value *create_fcmp(cmp_inst::pred_t pred, value *lhs, value *rhs, const std::string &name = "");
+  value *create_fcmp(cmp_pred_t pred, value *lhs, value *rhs, const std::string &name = "");
   value *create_fcmpOLT(value *lhs, value *rhs, const std::string &name = "");
   value *create_fcmpOGT(value *lhs, value *rhs, const std::string &name = "");
   value *create_fcmpOLE(value *lhs, value *rhs, const std::string &name = "");
@@ -119,16 +121,22 @@ public:
   // Input/Output
   value *create_load(value *arg, const std::string &name = "");
   value *create_store(value *ptr, value *val, const std::string &name = "");
+  value *create_masked_load(value *arg, value *mask, value *false_value, const std::string &name = "");
+  value *create_masked_store(value *ptr, value *val, value *mask, const std::string &name = "");
   // Tile instruction
   value *create_splat(value *arg, const type::tile_shapes_t &shapes, const std::string &name = "");
   value *create_reshape(value *arg, const type::tile_shapes_t &shapes, const std::string &name = "");
   value *create_broadcast(value *arg, const type::tile_shapes_t &shapes, const std::string &name = "");
   // Built-in instruction
-  value *create_get_global_range(unsigned axis, type::tile_shapes_t::value_type size, const std::string &name = "");
-  value *create_get_range_id(unsigned axis, const std::string &name = "");
+  value *create_get_program_id(unsigned axis, const std::string &name = "");
+  value *create_get_num_program(unsigned axis, const std::string &name = "");
   value *create_atomic_cas(value *ptr, value *cmp, value *val, const std::string &name = "");
+  value *create_atomic_exch(value *ptr, value *val, const std::string &name = "");
+  value *create_atomic_add(value *ptr, value *val, const std::string &name = "");
   value *create_dot(value *A, value *B, value *C, const std::string &name = "");
-  value *create_trans(value *A, const std::string &name = "");
+  value *create_trans(value *A, const std::vector<constant_int *> &perm = {}, const std::string &name = "");
+  value *create_sqrt(value *A, const std::string &name = "");
+  value *create_reduce(value *A, unsigned axis, const std::string &name = "");
   value *create_select(value *pred, value *if_value, value *else_value, const std::string &name = "");
   // Intrinsics
   value *create_copy_to_shared(value *arg, const std::string &name = "");

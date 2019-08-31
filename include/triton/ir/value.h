@@ -1,9 +1,10 @@
-#ifndef TDL_INCLUDE_IR_VALUE_H
-#define TDL_INCLUDE_IR_VALUE_H
+#pragma once
+
+#ifndef _TRITON_IR_VALUE_H_
+#define _TRITON_IR_VALUE_H_
 
 #include <string>
 #include <vector>
-#include <memory>
 #include <set>
 
 namespace triton{

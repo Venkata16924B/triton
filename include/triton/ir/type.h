@@ -1,9 +1,11 @@
-#ifndef TDL_INCLUDE_IR_TYPE_H
-#define TDL_INCLUDE_IR_TYPE_H
+#pragma once
 
+#ifndef _TRITON_IR_TYPE_H_
+#define _TRITON_IR_TYPE_H_
+
+#include <cassert>
 #include <vector>
-#include <iostream>
-#include <set>
+#include <string>
 
 namespace triton{
 namespace ir{
@@ -16,7 +18,7 @@ class constant_int;
 /* Type */
 class type {
 public:
-  typedef std::vector<constant_int*>	         tile_shapes_t;
+  typedef std::vector<unsigned>	         tile_shapes_t;
 
 protected:
   typedef std::vector<type*>                  contained_tys_vec_t;
@@ -40,7 +42,8 @@ public:
     IntegerTyID,     ///< 10: Arbitrary bit width integers
     FunctionTyID,    ///< 11: Functions
     PointerTyID,     ///< 12: Pointers
-    TileTyID,        ///< 13: Tile
+    StructTyID,      ///< 13: Struct
+    TileTyID,        ///< 14: Tile
   };
 
 public:
@@ -66,16 +69,18 @@ public:
   type *get_pointer_element_ty() const;
 
   // primitive predicates
-  bool is_void_ty() const     { return id_ == VoidTyID; }
-  bool is_half_ty() const     { return id_ == HalfTyID; }
-  bool is_float_ty() const    { return id_ == FloatTyID; }
-  bool is_double_ty() const   { return id_ == DoubleTyID; }
-  bool is_label_ty()  const   { return id_ == LabelTyID;}
-  bool is_metadata_ty() const { return id_ == MetadataTyID; }
-  bool is_token_ty() const    { return id_ == TokenTyID; }
-  bool is_integer_ty() const  { return id_ == IntegerTyID; }
-  bool is_pointer_ty() const  { return id_ == PointerTyID; }
-  bool is_tile_ty() const     { return id_ == TileTyID; }
+  bool is_void_ty() const               { return id_ == VoidTyID; }
+  bool is_half_ty() const               { return id_ == HalfTyID; }
+  bool is_float_ty() const              { return id_ == FloatTyID; }
+  bool is_double_ty() const             { return id_ == DoubleTyID; }
+  bool is_label_ty()  const             { return id_ == LabelTyID;}
+  bool is_metadata_ty() const           { return id_ == MetadataTyID; }
+  bool is_token_ty() const              { return id_ == TokenTyID; }
+  bool is_integer_ty() const            { return id_ == IntegerTyID; }
+  bool is_integer_ty(unsigned bitwidth) { return is_integer_ty() &&
+                                                 get_integer_bitwidth() == bitwidth;}
+  bool is_pointer_ty() const            { return id_ == PointerTyID; }
+  bool is_tile_ty() const               { return id_ == TileTyID; }
 
   // Composite predicates
   bool is_int_or_tileint_ty();
@@ -99,6 +104,42 @@ public:
   static integer_type *get_int64_ty(context &ctx);
   static integer_type *get_int128_ty(context &ctx);
 
+  // repr
+  std::string tile_repr() const {
+    std::string res = get_tile_element_ty()->repr();
+    auto shapes = get_tile_shapes();
+    res += "<";
+    for(size_t i = 0; i < shapes.size(); i++){
+      if(i > 0)
+        res += ", ";
+      res += std::to_string(shapes[i]);
+    }
+    res+= ">";
+    return res;
+  }
+
+  std::string repr() const {
+    switch(id_) {
+      case VoidTyID: return "void";
+      case HalfTyID: return "f16";
+      case FloatTyID: return "f32";
+      case DoubleTyID: return "f64";
+      case X86_FP80TyID: return "f80";
+      case FP128TyID: return "f128";
+      case PPC_FP128TyID: return "ppcf128";
+      case LabelTyID: return "label";
+      case MetadataTyID: return "md";
+      case TokenTyID: return "tok";
+      case IntegerTyID: return "i" + std::to_string(get_integer_bitwidth());
+      case FunctionTyID: return "fn";
+      case PointerTyID: return get_pointer_element_ty()->repr() + "*";
+      case StructTyID: return "struct";
+      case TileTyID: return tile_repr();
+      default: break;
+    }
+    assert(false);
+    return "";
+  };
 
 private:
   context &ctx_;
@@ -150,9 +191,6 @@ public:
   // factory methods
   static tile_type* get(type *ty, const tile_shapes_t &shapes);
   static tile_type* get_same_shapes(type *ty, type *ref);
-
-  // shortcut to get a 1 element in the shape
-  static tile_shapes_t::value_type make_one(context &ctx);
 
 private:
   tile_shapes_t shapes_;

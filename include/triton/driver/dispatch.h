@@ -1,27 +1,7 @@
-/* Copyright 2015-2017 Philippe Tillet
-*
-* Permission is hereby granted, free of charge, to any person obtaining
-* a copy of this software and associated documentation files
-* (the "Software"), to deal in the Software without restriction,
-* including without limitation the rights to use, copy, modify, merge,
-* publish, distribute, sublicense, and/or sell copies of the Software,
-* and to permit persons to whom the Software is furnished to do so,
-* subject to the following conditions:
-*
-* The above copyright notice and this permission notice shall be
-* included in all copies or substantial portions of the Software.
-*
-* THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-* EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-* MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.
-* IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-* CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT,
-* TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
-* SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-*/
+#pragma once
 
-#ifndef TDL_INCLUDE_DRIVER_DISPATCHER_H
-#define TDL_INCLUDE_DRIVER_DISPATCHER_H
+#ifndef _TRITON_DRIVER_DISPATCH_H_
+#define _TRITON_DRIVER_DISPATCH_H_
 
 #include <type_traits>
 #include <dlfcn.h>
@@ -55,7 +35,7 @@ void check(VkResult err);
 
 class dispatch
 {
-private:
+protected:
   template <class F>
   struct return_type;
 
@@ -202,11 +182,16 @@ public:
   static CUresult cuPointerGetAttribute(void * data, CUpointer_attribute attribute, CUdeviceptr ptr);
   static CUresult cuCtxGetDevice(CUdevice* result);
   static CUresult cuMemsetD8Async(CUdeviceptr dst, unsigned char x, size_t N, CUstream stream);
+  static CUresult cuFuncGetAttribute(int* pi, CUfunction_attribute attrib, CUfunction hfunc);
+  static CUresult cuFuncSetAttribute(CUfunction hfunc, CUfunction_attribute attrib, int  value);
+  static CUresult cuFuncSetCacheConfig (CUfunction hfunc, CUfunc_cache config);
   // NVML
   static nvmlReturn_t nvmlDeviceGetHandleByPciBusId_v2( const char* pciBusId, nvmlDevice_t* device);
   static nvmlReturn_t nvmlDeviceGetClockInfo(nvmlDevice_t device, nvmlClockType_t type, unsigned int *clock);
   static nvmlReturn_t nvmlDeviceGetMaxClockInfo(nvmlDevice_t device, nvmlClockType_t type, unsigned int *clock);
   static nvmlReturn_t nvmlDeviceSetApplicationsClocks(nvmlDevice_t device, unsigned int mem_clock, unsigned int sm_clock);
+
+
   // SPIR-V libraries
   static int initializeLLVMToSPIRVPass(llvm::PassRegistry &);
   static bool writeSpirv(llvm::Module *M, std::ostream &OS, std::string &ErrMsg);
@@ -336,6 +321,9 @@ private:
   static void* cuMemsetD8Async_;
   static void* cuCtxPushCurrent_v2_;
   static void* cuCtxPopCurrent_v2_;
+  static void* cuFuncGetAttribute_;
+  static void* cuFuncSetAttribute_;
+  static void* cuFuncSetCacheConfig_;
   // NVML
   static void* nvmlInit_v2_;
   static void* nvmlDeviceGetHandleByPciBusId_v2_;
