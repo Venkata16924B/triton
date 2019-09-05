@@ -44,9 +44,9 @@ void backend::platforms::init() {
   if(!cache_.empty())
     return;
   //if CUDA is here
-  if(dispatch::cuinit()){
-    cache_.push_back(new cu_platform());
-  }
+//  if(dispatch::cuinit()){
+//    cache_.push_back(new cu_platform());
+//  }
 //  //if OpenCL is here
 //  if(dispatch::clinit()){
 //    cl_uint num_platforms;
@@ -56,6 +56,31 @@ void backend::platforms::init() {
 //    for(cl_platform_id id: ids)
 //      cache_.push_back(new cl_platform(id));
 //  }
+    // vulkan
+  if(dispatch::vkinit()) {
+    std::vector<platform*> pf;
+
+    /*
+    Contains application info. This is actually not that important.
+    The only real important field is apiVersion.
+    */
+    VkApplicationInfo applicationInfo = {};
+    applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    applicationInfo.pApplicationName = "triton";
+    applicationInfo.applicationVersion = 0;
+    applicationInfo.pEngineName = "";
+    applicationInfo.engineVersion = 0;
+    applicationInfo.apiVersion = VK_API_VERSION_1_0;;
+
+    VkInstanceCreateInfo createInfo = {};
+    createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    createInfo.flags = 0;
+    createInfo.pApplicationInfo = &applicationInfo;
+
+    VkInstance vk;
+    dispatch::vkCreateInstance(&createInfo, nullptr, &vk);
+    cache_.push_back(new vk_platform(vk));
+  }
 //  //if host is here
 //  bool host_visible = true;
 //  if(host_visible){

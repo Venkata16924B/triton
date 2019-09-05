@@ -82,11 +82,18 @@ private:
 };
 
 class vk_kernel: public kernel {
+public:
   //Constructors
   vk_kernel(driver::module* program, const char* name);
+  // Make pipeline
+  void initPipeline();
   // Arguments setters
   void setArg(unsigned int index, std::size_t size, void* ptr);
   void setArg(unsigned int index, driver::buffer* buffer);
+
+private:
+  std::vector<std::shared_ptr<VkDescriptorSetLayout>>  vk_params_store_;
+  std::vector<VkDescriptorSetLayout>  vk_params_;
 };
 
 }

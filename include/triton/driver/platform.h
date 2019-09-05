@@ -70,7 +70,7 @@ private:
   unsigned get_compute_queue_idx(VkPhysicalDevice p_device) const;
 
 public:
-  vk_platform(): platform("Vulkan") { }
+  vk_platform(vk_platform_t vk): platform("Vulkan"), vk_(vk){ }
   std::string version() const;
   void devices(std::vector<device *> &devices) const;
 

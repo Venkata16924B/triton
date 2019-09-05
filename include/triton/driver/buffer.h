@@ -19,6 +19,7 @@ public:
   buffer(driver::context* ctx, size_t size, CUdeviceptr cl, bool take_ownership);
   buffer(driver::context* ctx, size_t size, cl_mem cl, bool take_ownership);
   buffer(driver::context* ctx, size_t size, host_buffer_t hst, bool take_ownership);
+  buffer(driver::context *ctx, size_t size, vk_buffer_t vk, bool take_ownership);
   static buffer* create(driver::context* ctx, size_t size);
   driver::context* context();
   size_t size();

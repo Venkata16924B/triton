@@ -56,6 +56,7 @@ kernel* kernel::create(driver::module* program, const char* name) {
     case CUDA: return new cu_kernel(program, name);
     case OpenCL: return new ocl_kernel(program, name);
     case Host: return new host_kernel(program, name);
+    case Vulkan: return new vk_kernel(program, name);
     default: throw std::runtime_error("unknown backend");
     }
 }
@@ -123,38 +124,50 @@ void ocl_kernel::setArg(unsigned int index, driver::buffer* buffer) {
 /* ------------------------ */
 
 vk_kernel::vk_kernel(driver::module* program, const char * name): kernel(program, vk_function_t(), true){
-  VkDevice vk_device = program->context()->device()->vk()->device;
+}
 
-  std::vector<VkDescriptorSetLayoutBinding> bindings(2);
-  for (uint32_t i = 0; i < bindings.size(); i++) {
-      bindings[i].binding = i;
-      bindings[i].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
-      bindings[i].descriptorCount = 1;
-      bindings[i].stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
-      bindings[i].pImmutableSamplers = nullptr;
-  }
+void vk_kernel::initPipeline() {
+    VkDevice vk_device = module()->context()->device()->vk()->device;
 
-  VkDescriptorSetLayoutCreateInfo descriptor_layout_info = {VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
-  descriptor_layout_info.pBindings = bindings.data();
-  descriptor_layout_info.bindingCount = bindings.size();
-  dispatch::vkCreateDescriptorSetLayout(vk_device, &descriptor_layout_info, nullptr, &vk_->descriptor_layout);
+    VkDescriptorPoolSize descriptorPoolSize = {};
+    descriptorPoolSize.type = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+    descriptorPoolSize.descriptorCount = 1;
+
+    VkDescriptorPoolCreateInfo descriptorPoolCreateInfo = {};
+    descriptorPoolCreateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+    descriptorPoolCreateInfo.maxSets = 1; // we only need to allocate one descriptor set from the pool.
+    descriptorPoolCreateInfo.poolSizeCount = 1;
+    descriptorPoolCreateInfo.pPoolSizes = &descriptorPoolSize;
+    // create descriptor pool.
+    dispatch::vkCreateDescriptorPool(vk_device, &descriptorPoolCreateInfo, NULL, &vk_->descriptor_pool);
+
+    // With the pool allocated, we can now allocate the descriptor set.
+    VkDescriptorSetAllocateInfo descriptorSetAllocateInfo = {};
+    descriptorSetAllocateInfo.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO;
+    descriptorSetAllocateInfo.descriptorPool = vk_->descriptor_pool; // pool to allocate from.
+    descriptorSetAllocateInfo.descriptorSetCount = vk_params_.size(); // allocate a single descriptor set.
+    descriptorSetAllocateInfo.pSetLayouts = vk_params_.data();
+
+    // allocate descriptor set.
+    dispatch::vkAllocateDescriptorSets(vk_device, &descriptorSetAllocateInfo, &vk_->descriptor_set);
 
 
-  VkPipelineLayoutCreateInfo pipeline_layout_info = {VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO};
-  pipeline_layout_info.setLayoutCount = 1;
-  pipeline_layout_info.pSetLayouts = &vk_->descriptor_layout;
-  dispatch::vkCreatePipelineLayout(vk_device, &pipeline_layout_info, nullptr, &vk_->pipeline_layout);
+//    // Specify the buffer to bind to the descriptor.
+//    VkDescriptorBufferInfo descriptorBufferInfo = {};
+//    descriptorBufferInfo.buffer = buffer;
+//    descriptorBufferInfo.offset = 0;
+//    descriptorBufferInfo.range = bufferSize;
 
+//    VkWriteDescriptorSet writeDescriptorSet = {};
+//    writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+//    writeDescriptorSet.dstSet = descriptorSet; // write to this descriptor set.
+//    writeDescriptorSet.dstBinding = 0; // write to the first, and only binding.
+//    writeDescriptorSet.descriptorCount = 1; // update a single descriptor.
+//    writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // storage buffer.
+//    writeDescriptorSet.pBufferInfo = &descriptorBufferInfo;
 
-  VkPipelineShaderStageCreateInfo shader_info = {VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO};
-  shader_info.module = *program->vk();
-  shader_info.pName = name;
-  shader_info.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-
-  VkComputePipelineCreateInfo pipeline_info = {VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO};
-  pipeline_info.stage = shader_info;
-  pipeline_info.layout = vk_->pipeline_layout;
-  dispatch::vkCreateComputePipelines(vk_device, VK_NULL_HANDLE, 1, &pipeline_info, nullptr, &vk_->pipeline);
+//    // perform the update of the descriptor set.
+//    dispatch::vkUpdateDescriptorSets(vk_device, 1, &writeDescriptorSet, 0, NULL);
 }
 
 void vk_kernel::setArg(unsigned int index, std::size_t size, void* ptr){
@@ -162,8 +175,29 @@ void vk_kernel::setArg(unsigned int index, std::size_t size, void* ptr){
 }
 
 void vk_kernel::setArg(unsigned int index, driver::buffer* buffer){
-  throw std::runtime_error("not implemented");
+  if(index + 1> vk_params_store_.size()){
+    vk_params_store_.resize(index+1);
+    vk_params_.resize(index+1);
+  }
+
+  VkDescriptorSetLayoutBinding binding = {};
+  binding.binding = index; // binding = 0
+  binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
+  binding.descriptorCount = 1;
+  binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+  VkDescriptorSetLayoutCreateInfo create_info = {};
+  create_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO;
+  create_info.bindingCount = 1; // only a single binding in this descriptor set layout.
+  create_info.pBindings = &binding;
+
+  VkDescriptorSetLayout *layout = new VkDescriptorSetLayout();
+  VkDevice device = module()->context()->device()->vk()->device;
+  dispatch::vkCreateDescriptorSetLayout(device, &create_info, nullptr, layout);
+  vk_params_store_[index].reset(layout);
+  vk_params_[index] = vk_params_store_[index].get();
 }
+
 
 /* ------------------------ */
 //         CUDA             //

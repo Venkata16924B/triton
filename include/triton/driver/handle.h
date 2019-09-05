@@ -43,6 +43,8 @@ struct vk_context_t {
 
 struct vk_stream_t {
   VkQueue queue;
+  VkCommandPool pool;
+  VkCommandBuffer buffer;
 };
 
 typedef VkShaderModule vk_module_t;
@@ -50,7 +52,8 @@ typedef VkShaderModule vk_module_t;
 struct vk_function_t {
   VkPipeline pipeline;
   VkPipelineLayout pipeline_layout;
-  VkDescriptorSetLayout descriptor_layout;
+  VkDescriptorSet descriptor_set;
+  VkDescriptorPool descriptor_pool;
 };
 
 struct vk_buffer_t {

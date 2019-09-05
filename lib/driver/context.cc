@@ -51,11 +51,18 @@ context::context(driver::device *dev, host_context_t hst, bool take_ownership):
   dev_(dev), cache_path_(get_cache_path()){
 }
 
+context::context(driver::device *dev, vk_context_t vk, bool take_ownership):
+  polymorphic_resource(vk, take_ownership),
+  dev_(dev), cache_path_(get_cache_path()) {
+
+}
+
 context* context::create(driver::device *dev){
   switch(dev->backend()){
   case CUDA: return new cu_context(dev);
   case OpenCL: return new ocl_context(dev);
   case Host: return new host_context(dev);
+  case Vulkan: return  new vk_context(dev);
   default: throw std::runtime_error("unknown backend");
   }
 }
@@ -141,6 +148,12 @@ ocl_context::ocl_context(driver::device* dev): context(dev, cl_context(), true) 
   check(err);
 }
 
+/* ------------------------ */
+//         Vulkan           //
+/* ------------------------ */
+vk_context::vk_context(driver::device* dev): context(dev, vk_context_t(), true) {
+
+}
 
 
 }

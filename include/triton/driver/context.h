@@ -19,6 +19,7 @@ public:
   context(driver::device *dev, CUcontext cu, bool take_ownership);
   context(driver::device *dev, cl_context cl, bool take_ownership);
   context(driver::device *dev, host_context_t hst, bool take_ownership);
+  context(driver::device *dev, vk_context_t vk, bool take_ownership);
   driver::device* device() const;
   std::string const & cache_path() const;
   // factory methods

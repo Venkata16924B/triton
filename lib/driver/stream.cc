@@ -54,11 +54,16 @@ stream::stream(driver::context *ctx, host_stream_t cl, bool has_ownership)
   : polymorphic_resource(cl, has_ownership), ctx_(ctx) {
 }
 
+stream::stream(driver::context *ctx, vk_stream_t vk, bool has_ownership)
+  : polymorphic_resource(vk, has_ownership), ctx_(ctx) {
+
+}
 driver::stream* stream::create(driver::context* ctx) {
   switch(ctx->backend()){
     case CUDA: return new cu_stream(ctx);
     case OpenCL: return new cl_stream(ctx);
     case Host: return new host_stream(ctx);
+    case Vulkan: return new vk_stream(ctx);
     default: throw std::runtime_error("unknown backend");
   }
 }
@@ -174,6 +179,64 @@ void cu_stream::read(driver::buffer* buffer, bool blocking, std::size_t offset, 
   else
     dispatch::cuMemcpyDtoHAsync(ptr, *buffer->cu() + offset, size, *cu_);
 }
+
+/* ------------------------ */
+//         Vulkan           //
+/* ------------------------ */
+
+
+vk_stream::vk_stream(driver::context* context):
+    stream(context, vk_stream_t(), true){
+  VkDevice dev = context->device()->vk()->device;
+  unsigned queue_family_idx = 0;
+  unsigned queue_idx = 0;
+  // create queue
+  dispatch::vkGetDeviceQueue(context->device()->vk()->device, queue_family_idx, queue_idx, &vk_->queue);
+  // create pool
+  VkCommandPoolCreateInfo pool_info = {};
+  pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+  pool_info.flags = 0;
+  pool_info.queueFamilyIndex = 0;
+  dispatch::vkCreateCommandPool(dev, &pool_info, nullptr, &vk_->pool);
+  // create command buffer
+  VkCommandBufferAllocateInfo buffer_info = {};
+  buffer_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+  buffer_info.commandPool = vk_->pool;
+  buffer_info.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+  buffer_info.commandBufferCount = 1;
+  dispatch::vkAllocateCommandBuffers(dev, &buffer_info, &vk_->buffer);
+}
+  // Overridden
+void vk_stream::synchronize() {
+
+}
+
+void vk_stream::enqueue(driver::kernel* kernel, std::array<size_t, 3> grid,
+                        std::array<size_t, 3> block, std::vector<event> const *, event *event) {
+
+    // start recording
+    VkCommandBufferBeginInfo begin_info = {};
+    begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    begin_info.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+    dispatch::vkBeginCommandBuffer(vk_->buffer, &begin_info);
+    // bind pipeline
+    dispatch::vkCmdBindPipeline(vk_->buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                kernel->vk()->pipeline);
+    // bind descriptors
+    dispatch::vkCmdBindDescriptorSets(vk_->buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
+                                      kernel->vk()->pipeline_layout, 0, 1, &kernel->vk()->descriptor_set, 0, nullptr);
+    // dispatch
+    dispatch::vkCmdDispatch(vk_->buffer, grid[0], grid[1], grid[2]);
+}
+
+void vk_stream::write(driver::buffer* buf, bool blocking, std::size_t offset, std::size_t size, void const* ptr) {
+
+}
+
+void vk_stream::read(driver::buffer* buf, bool blocking, std::size_t offset, std::size_t size, void* ptr) {
+
+}
+
 
 
 }

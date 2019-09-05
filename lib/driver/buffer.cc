@@ -44,8 +44,8 @@ buffer::buffer(driver::context* ctx, size_t size, cl_mem cl, bool take_ownership
 buffer::buffer(driver::context* ctx, size_t size, host_buffer_t hst, bool take_ownership)
   : polymorphic_resource(hst, take_ownership), context_(ctx), size_(size) { }
 
-buffer::buffer(driver::context *ctx, vk_buffer_t vk, bool take_ownership)
-  : polymorphic_resource(vk, take_ownership), context_(ctx) { }
+buffer::buffer(driver::context *ctx, size_t size, vk_buffer_t vk, bool take_ownership)
+  : polymorphic_resource(vk, take_ownership), context_(ctx), size_(size) { }
 
 driver::context* buffer::context() {
   return context_;
@@ -102,7 +102,7 @@ void cu_buffer::set_zero(driver::stream* queue, size_t size)
 
 //
 vk_buffer::vk_buffer(driver::context *context, size_t size)
-  : buffer(context, vk_buffer_t(), true) {
+  : buffer(context, size, vk_buffer_t(), true) {
   driver::vk_device* device = (driver::vk_device*)context->device();
   VkDevice vk_device = context->device()->vk()->device;
   // create buffer
