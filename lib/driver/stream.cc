@@ -208,7 +208,23 @@ vk_stream::vk_stream(driver::context* context):
 }
   // Overridden
 void vk_stream::synchronize() {
-
+    VkDevice vk_device = context()->device()->vk()->device;
+    // create submit info
+    VkSubmitInfo submitInfo = {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+    submitInfo.commandBufferCount = 1; // submit a single command buffer
+    submitInfo.pCommandBuffers = &vk_->buffer; // the command buffer to submit.
+    // create fence
+    VkFence fence;
+    VkFenceCreateInfo fenceCreateInfo = {};
+    fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    fenceCreateInfo.flags = 0;
+    dispatch::vkCreateFence(vk_device, &fenceCreateInfo, NULL, &fence);
+    // submit
+    dispatch::vkQueueSubmit(vk_->queue, 1, &submitInfo, fence);
+    //wait
+    dispatch::vkWaitForFences(vk_device, 1, &fence, VK_FALSE, 1);
+//    dispatch::vkDestroyFence(vk_device, fence, NULL);
 }
 
 void vk_stream::enqueue(driver::kernel* kernel, std::array<size_t, 3> grid,
@@ -227,7 +243,7 @@ void vk_stream::enqueue(driver::kernel* kernel, std::array<size_t, 3> grid,
     dispatch::vkCmdBindDescriptorSets(vk_->buffer, VK_PIPELINE_BIND_POINT_COMPUTE,
                                       kernel->vk()->pipeline_layout, 0, 1, &kernel->vk()->descriptor_set, 0, nullptr);
     // dispatch
-    dispatch::vkCmdDispatch(vk_->buffer, grid[0], grid[1], grid[2]);
+    dispatch::vkCmdDispatch(vk_->buffer, 1, 1, 1);
 }
 
 void vk_stream::write(driver::buffer* buf, bool blocking, std::size_t offset, std::size_t size, void const* ptr) {

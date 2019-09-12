@@ -124,6 +124,7 @@ void ocl_kernel::setArg(unsigned int index, driver::buffer* buffer) {
 /* ------------------------ */
 
 vk_kernel::vk_kernel(driver::module* program, const char * name): kernel(program, vk_function_t(), true){
+
 }
 
 void vk_kernel::initPipeline() {
@@ -151,23 +152,42 @@ void vk_kernel::initPipeline() {
     // allocate descriptor set.
     dispatch::vkAllocateDescriptorSets(vk_device, &descriptorSetAllocateInfo, &vk_->descriptor_set);
 
+    // write descriptor set
+    VkWriteDescriptorSet writeDescriptorSet = {};
+    writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
+    writeDescriptorSet.dstSet = vk_->descriptor_set; // write to this descriptor set.
+    writeDescriptorSet.dstBinding = 0; // write to the first, and only binding.
+    writeDescriptorSet.descriptorCount = vk_buffers_.size(); // update a single descriptor.
+    writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // storage buffer.
+    writeDescriptorSet.pBufferInfo = vk_buffers_.data();
 
-//    // Specify the buffer to bind to the descriptor.
-//    VkDescriptorBufferInfo descriptorBufferInfo = {};
-//    descriptorBufferInfo.buffer = buffer;
-//    descriptorBufferInfo.offset = 0;
-//    descriptorBufferInfo.range = bufferSize;
+    // perform the update of the descriptor set.
+    dispatch::vkUpdateDescriptorSets(vk_device, 1, &writeDescriptorSet, 0, NULL);
 
-//    VkWriteDescriptorSet writeDescriptorSet = {};
-//    writeDescriptorSet.sType = VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET;
-//    writeDescriptorSet.dstSet = descriptorSet; // write to this descriptor set.
-//    writeDescriptorSet.dstBinding = 0; // write to the first, and only binding.
-//    writeDescriptorSet.descriptorCount = 1; // update a single descriptor.
-//    writeDescriptorSet.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER; // storage buffer.
-//    writeDescriptorSet.pBufferInfo = &descriptorBufferInfo;
+    // create pipeline
+    VkPipelineShaderStageCreateInfo shaderStageCreateInfo = {};
+    shaderStageCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    shaderStageCreateInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+    shaderStageCreateInfo.module = *module()->vk();
+    shaderStageCreateInfo.pName = "main";
 
-//    // perform the update of the descriptor set.
-//    dispatch::vkUpdateDescriptorSets(vk_device, 1, &writeDescriptorSet, 0, NULL);
+    /*
+    The pipeline layout allows the pipeline to access descriptor sets.
+    So we just specify the descriptor set layout we created earlier.
+    */
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo = {};
+    pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutCreateInfo.setLayoutCount = vk_params_.size();
+    pipelineLayoutCreateInfo.pSetLayouts = vk_params_.data();
+    dispatch::vkCreatePipelineLayout(vk_device, &pipelineLayoutCreateInfo, NULL, &vk_->pipeline_layout);
+
+    VkComputePipelineCreateInfo pipelineCreateInfo = {};
+    pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
+    pipelineCreateInfo.stage = shaderStageCreateInfo;
+    pipelineCreateInfo.layout = vk_->pipeline_layout;
+
+    dispatch::vkCreateComputePipelines(vk_device, VK_NULL_HANDLE, 1,
+                                       &pipelineCreateInfo, NULL, &vk_->pipeline);
 }
 
 void vk_kernel::setArg(unsigned int index, std::size_t size, void* ptr){
@@ -175,10 +195,7 @@ void vk_kernel::setArg(unsigned int index, std::size_t size, void* ptr){
 }
 
 void vk_kernel::setArg(unsigned int index, driver::buffer* buffer){
-  if(index + 1> vk_params_store_.size()){
-    vk_params_store_.resize(index+1);
-    vk_params_.resize(index+1);
-  }
+
 
   VkDescriptorSetLayoutBinding binding = {};
   binding.binding = index; // binding = 0
@@ -194,8 +211,25 @@ void vk_kernel::setArg(unsigned int index, driver::buffer* buffer){
   VkDescriptorSetLayout *layout = new VkDescriptorSetLayout();
   VkDevice device = module()->context()->device()->vk()->device;
   dispatch::vkCreateDescriptorSetLayout(device, &create_info, nullptr, layout);
+
+  VkDescriptorBufferInfo* buf_info = new VkDescriptorBufferInfo();
+  buf_info->buffer = buffer->vk()->buffer;
+  buf_info->offset = 0;
+  buf_info->range = buffer->size();
+
+
+  if(index + 1> vk_buffers_store_.size()){
+    vk_buffers_store_.resize(index+1);
+    vk_buffers_.resize(index+1);
+  }
+  vk_buffers_store_[index].reset(buf_info);
+  vk_buffers_[index] = *vk_buffers_store_[index];
+  if(index + 1> vk_params_store_.size()){
+    vk_params_store_.resize(index+1);
+    vk_params_.resize(index+1);
+  }
   vk_params_store_[index].reset(layout);
-  vk_params_[index] = *vk_params_store_[index].get();
+  vk_params_[index] = *vk_params_store_[index];
 }
 
 

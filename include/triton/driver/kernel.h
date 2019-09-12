@@ -92,6 +92,8 @@ public:
   void setArg(unsigned int index, driver::buffer* buffer);
 
 private:
+  std::vector<std::shared_ptr<VkDescriptorBufferInfo>> vk_buffers_store_;
+  std::vector<VkDescriptorBufferInfo> vk_buffers_;
   std::vector<std::shared_ptr<VkDescriptorSetLayout>>  vk_params_store_;
   std::vector<VkDescriptorSetLayout>  vk_params_;
 };
