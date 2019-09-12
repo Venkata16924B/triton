@@ -64,6 +64,9 @@ void backend::platforms::init() {
     Contains application info. This is actually not that important.
     The only real important field is apiVersion.
     */
+    std::vector<const char *> enabledLayers = {"VK_LAYER_LUNARG_standard_validation"};
+    std::vector<const char *> enabledExtensions = {VK_EXT_DEBUG_REPORT_EXTENSION_NAME};
+
     VkApplicationInfo applicationInfo = {};
     applicationInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
     applicationInfo.pApplicationName = "triton";
@@ -75,17 +78,16 @@ void backend::platforms::init() {
     VkInstanceCreateInfo createInfo = {};
     createInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     createInfo.flags = 0;
+    createInfo.enabledLayerCount = enabledLayers.size();
+    createInfo.ppEnabledLayerNames = enabledLayers.data();
+    createInfo.enabledExtensionCount = enabledExtensions.size();
+    createInfo.ppEnabledExtensionNames = enabledExtensions.data();
     createInfo.pApplicationInfo = &applicationInfo;
 
     VkInstance vk;
     dispatch::vkCreateInstance(&createInfo, nullptr, &vk);
     cache_.push_back(new vk_platform(vk));
   }
-//  //if host is here
-//  bool host_visible = true;
-//  if(host_visible){
-//    cache_.push_back(new host_platform());
-//  }
   if(cache_.empty())
     throw std::runtime_error("Triton: No backend available. Make sure CUDA is available in your library path");
 }

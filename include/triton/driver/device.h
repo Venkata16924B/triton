@@ -110,6 +110,7 @@ public:
   size_t max_shared_memory() const;
   std::unique_ptr<codegen::target> make_target() const;
   uint32_t find_memory_type(uint32_t memory_type_bits, VkMemoryPropertyFlags properties);
+  uint32_t get_compute_queue_family_index();
 
 private:
   VkPhysicalDeviceProperties properties_;

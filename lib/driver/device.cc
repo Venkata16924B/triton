@@ -83,6 +83,25 @@ std::unique_ptr<codegen::target> vk_device::make_target() const {
   return std::unique_ptr<codegen::amd_cl_target>(new codegen::amd_cl_target());
 }
 
+uint32_t vk_device::get_compute_queue_family_index() {
+    // Returns the index of a queue family that supports compute operations.
+    uint32_t queueFamilyCount;
+    dispatch::vkGetPhysicalDeviceQueueFamilyProperties(vk_->p_device, &queueFamilyCount, NULL);
+    // Retrieve all queue families.
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    dispatch::vkGetPhysicalDeviceQueueFamilyProperties(vk_->p_device, &queueFamilyCount, queueFamilies.data());
+    // Now find a family that supports compute.
+    uint32_t i = 0;
+    for (; i < queueFamilies.size(); ++i) {
+      VkQueueFamilyProperties props = queueFamilies[i];
+      if (props.queueCount > 0 && (props.queueFlags & VK_QUEUE_COMPUTE_BIT))
+        break;
+    }
+    if (i == queueFamilies.size())
+      throw std::runtime_error("could not find a queue family that supports operations");
+    return i;
+}
+
 uint32_t vk_device::find_memory_type(uint32_t memory_type_bits, VkMemoryPropertyFlags properties) {
   VkPhysicalDeviceMemoryProperties memory_properties;
   dispatch::vkGetPhysicalDeviceMemoryProperties(vk_->p_device, &memory_properties);

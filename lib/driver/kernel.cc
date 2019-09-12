@@ -198,7 +198,7 @@ void vk_kernel::setArg(unsigned int index, driver::buffer* buffer){
 
 
   VkDescriptorSetLayoutBinding binding = {};
-  binding.binding = index; // binding = 0
+  binding.binding = index;
   binding.descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
   binding.descriptorCount = 1;
   binding.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;

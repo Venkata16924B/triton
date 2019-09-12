@@ -188,7 +188,7 @@ void cu_stream::read(driver::buffer* buffer, bool blocking, std::size_t offset, 
 vk_stream::vk_stream(driver::context* context):
     stream(context, vk_stream_t(), true){
   VkDevice dev = context->device()->vk()->device;
-  unsigned queue_family_idx = 0;
+  uint32_t queue_family_idx = ((driver::vk_device*)(context->device()))->get_compute_queue_family_index();
   unsigned queue_idx = 0;
   // create queue
   dispatch::vkGetDeviceQueue(context->device()->vk()->device, queue_family_idx, queue_idx, &vk_->queue);
@@ -196,7 +196,7 @@ vk_stream::vk_stream(driver::context* context):
   VkCommandPoolCreateInfo pool_info = {};
   pool_info.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
   pool_info.flags = 0;
-  pool_info.queueFamilyIndex = 0;
+  pool_info.queueFamilyIndex = queue_family_idx;
   dispatch::vkCreateCommandPool(dev, &pool_info, nullptr, &vk_->pool);
   // create command buffer
   VkCommandBufferAllocateInfo buffer_info = {};
@@ -220,11 +220,11 @@ void vk_stream::synchronize() {
     fenceCreateInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
     fenceCreateInfo.flags = 0;
     dispatch::vkCreateFence(vk_device, &fenceCreateInfo, NULL, &fence);
-    // submit
+//    // submit
     dispatch::vkQueueSubmit(vk_->queue, 1, &submitInfo, fence);
-    //wait
-    dispatch::vkWaitForFences(vk_device, 1, &fence, VK_FALSE, 1);
-//    dispatch::vkDestroyFence(vk_device, fence, NULL);
+//    //wait
+    dispatch::vkWaitForFences(vk_device, 1, &fence, VK_TRUE, 5e9);
+    dispatch::vkDestroyFence(vk_device, fence, NULL);
 }
 
 void vk_stream::enqueue(driver::kernel* kernel, std::array<size_t, 3> grid,
@@ -244,6 +244,8 @@ void vk_stream::enqueue(driver::kernel* kernel, std::array<size_t, 3> grid,
                                       kernel->vk()->pipeline_layout, 0, 1, &kernel->vk()->descriptor_set, 0, nullptr);
     // dispatch
     dispatch::vkCmdDispatch(vk_->buffer, 1, 1, 1);
+    // end recording
+    dispatch::vkEndCommandBuffer(vk_->buffer);
 }
 
 void vk_stream::write(driver::buffer* buf, bool blocking, std::size_t offset, std::size_t size, void const* ptr) {

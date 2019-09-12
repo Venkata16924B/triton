@@ -220,18 +220,51 @@ ocl_module::ocl_module(driver::context * context, llvm::Module* src): module(con
 //         Vulkan           //
 /* ------------------------ */
 
+// Read file into array of bytes, and cast to uint32_t*, then return.
+// The data has been padded, so that it fits into an array uint32_t.
+uint32_t* readFile(uint32_t& length, const char* filename) {
+
+    FILE* fp = fopen(filename, "rb");
+    if (fp == NULL) {
+        printf("Could not find or open file: %s\n", filename);
+    }
+
+    // get file size.
+    fseek(fp, 0, SEEK_END);
+    long filesize = ftell(fp);
+    fseek(fp, 0, SEEK_SET);
+
+    long filesizepadded = long(ceil(filesize / 4.0)) * 4;
+
+    // read file contents.
+    char *str = new char[filesizepadded];
+    fread(str, filesize, sizeof(char), fp);
+    fclose(fp);
+
+    // data padding.
+    for (int i = filesize; i < filesizepadded; i++) {
+        str[i] = 0;
+    }
+
+    length = filesizepadded;
+    return (uint32_t *)str;
+}
+
 vk_module::vk_module(driver::context *context, llvm::Module *src): module(context, vk_module_t(), true) {
-  std::ifstream fin("comp.spv", std::ifstream::ate);
-  size_t byteLength = fin.tellg();
-  fin.seekg(0, std::ifstream::beg);
-  char *data = new char[byteLength];
-  fin.read(data, byteLength);
-  fin.close();
+//  std::ifstream fin("comp.spv", std::ifstream::ate);
+//  size_t byteLength = fin.tellg();
+//  fin.seekg(0, std::ifstream::beg);
+//  char *data = new char[byteLength];
+//  fin.read(data, byteLength);
+//  fin.close();
+  uint32_t fileLength;
+  uint32_t* code = readFile(fileLength, "comp.spv");
   // create info
   VkShaderModuleCreateInfo create_info = {VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO};
-  create_info.codeSize = byteLength;
-  create_info.pCode = (uint32_t *) data;
+  create_info.codeSize = fileLength;
+  create_info.pCode = code;
   dispatch::vkCreateShaderModule(context->device()->vk()->device, &create_info, nullptr, &*vk_);
+  delete[] code;
 }
 
 
