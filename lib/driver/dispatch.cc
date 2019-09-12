@@ -280,6 +280,8 @@ VK_DEFINE3(VkResult, vkGetPhysicalDeviceQueueFamilyProperties, VkPhysicalDevice 
 VK_DEFINE2(void, vkGetPhysicalDeviceProperties, VkPhysicalDevice, VkPhysicalDeviceProperties *)
 VK_DEFINE4(VkResult, vkCreatePipelineLayout, VkDevice, const VkPipelineLayoutCreateInfo *, const VkAllocationCallbacks *, VkPipelineLayout *)
 VK_DEFINE2(void, vkGetPhysicalDeviceMemoryProperties, VkPhysicalDevice, VkPhysicalDeviceMemoryProperties*)
+VK_DEFINE6(VkResult, vkMapMemory, VkDevice, VkDeviceMemory, VkDeviceSize, VkDeviceSize, VkMemoryMapFlags, void**);
+VK_DEFINE2(void, vkUnmapMemory, VkDevice, VkDeviceMemory);
 
 // LLVM to SPIR-V
 int dispatch::initializeLLVMToSPIRVPass(llvm::PassRegistry &registry){
@@ -380,6 +382,8 @@ void* dispatch::vkGetPhysicalDeviceQueueFamilyProperties_;
 void* dispatch::vkGetPhysicalDeviceProperties_;
 void* dispatch::vkCreatePipelineLayout_;
 void* dispatch::vkGetPhysicalDeviceMemoryProperties_;
+void* dispatch::vkMapMemory_;
+void* dispatch::vkUnmapMemory_;
 
 //CUDA
 void* dispatch::cuCtxGetCurrent_;

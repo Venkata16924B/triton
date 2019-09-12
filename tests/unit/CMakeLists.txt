@@ -1,6 +1,6 @@
-foreach(PROG dot driver)
+foreach(PROG driver)
      set(TARGET test_${PROG})
-     add_executable(${TARGET} ${PROG}.cc)
+     add_executable(${TARGET} ${PROG}.cc lodepng.cpp)
      set_target_properties(${TARGET} PROPERTIES OUTPUT_NAME ${TARGET})
      target_link_libraries(${TARGET} triton dl)
 endforeach(PROG)

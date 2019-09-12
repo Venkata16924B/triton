@@ -161,6 +161,8 @@ public:
   static void vkGetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties *pProperties);
   static VkResult vkCreatePipelineLayout(VkDevice device, const VkPipelineLayoutCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkPipelineLayout *pPipelineLayout);
   static void vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties *pMemoryProperties);
+  static VkResult vkMapMemory(VkDevice device, VkDeviceMemory memory, VkDeviceSize offset, VkDeviceSize size, VkMemoryMapFlags flags, void** ppData);
+  static void vkUnmapMemory(VkDevice device, VkDeviceMemory memory);
 
   // CUDA
   static CUresult cuCtxGetCurrent(CUcontext *pctx);
@@ -264,6 +266,8 @@ private:
   static void* vkGetPhysicalDeviceProperties_;
   static void* vkCreatePipelineLayout_;
   static void* vkGetPhysicalDeviceMemoryProperties_;
+  static void* vkMapMemory_;
+  static void* vkUnmapMemory_;
 
   // OpenCL functions
   static void* clBuildProgram_;
