@@ -195,7 +195,7 @@ void vk_kernel::setArg(unsigned int index, driver::buffer* buffer){
   VkDevice device = module()->context()->device()->vk()->device;
   dispatch::vkCreateDescriptorSetLayout(device, &create_info, nullptr, layout);
   vk_params_store_[index].reset(layout);
-  vk_params_[index] = vk_params_store_[index].get();
+  vk_params_[index] = *vk_params_store_[index].get();
 }
 
 

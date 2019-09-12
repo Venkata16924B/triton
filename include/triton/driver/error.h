@@ -231,6 +231,7 @@ namespace triton
   TRITON_CREATE_VK_EXCEPTION(validation_failed_ext            , "validation failed (ext)");
   TRITON_CREATE_VK_EXCEPTION(invalid_shader_nv                , "invalid shader (nv)");
   TRITON_CREATE_VK_EXCEPTION(not_permitted_ext                , "not permitted (ext)");
+  TRITON_CREATE_VK_EXCEPTION(unknown                          , "unknown");
   }
 
   }

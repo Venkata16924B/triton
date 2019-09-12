@@ -159,6 +159,7 @@ void check(VkResult err)
   using namespace exception::vk;
   switch(err)
   {
+    case VK_SUCCESS:                        return;
     case VK_NOT_READY:                      throw not_ready();
     case VK_TIMEOUT:                        throw timeout();
     case VK_ERROR_OUT_OF_HOST_MEMORY:       throw out_of_host_memory();
@@ -182,6 +183,7 @@ void check(VkResult err)
     case VK_ERROR_VALIDATION_FAILED_EXT:    throw validation_failed_ext();
     case VK_ERROR_INVALID_SHADER_NV:        throw invalid_shader_nv();
     case VK_ERROR_NOT_PERMITTED_EXT:        throw not_permitted_ext();
+    default:                                throw unknown();
   }
 }
 

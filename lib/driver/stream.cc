@@ -213,7 +213,8 @@ void vk_stream::synchronize() {
 
 void vk_stream::enqueue(driver::kernel* kernel, std::array<size_t, 3> grid,
                         std::array<size_t, 3> block, std::vector<event> const *, event *event) {
-
+    driver::vk_kernel* vk_kernel = (driver::vk_kernel*)kernel;
+    vk_kernel->initPipeline();
     // start recording
     VkCommandBufferBeginInfo begin_info = {};
     begin_info.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;

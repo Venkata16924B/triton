@@ -33,6 +33,23 @@ void check(CUresult err);
 void check(cl_int err);
 void check(VkResult err);
 
+template<typename OUT, typename FunPtrT, typename... Args>
+struct forward_ret_impl {
+  static OUT call(FunPtrT fn, Args... args) {
+    OUT ret = (*fn)(args...);
+    check(ret);
+    return ret;
+  }
+};
+
+template<typename FunPtrT, typename... Args>
+struct forward_ret_impl<void, FunPtrT, Args...> {
+  static void call(FunPtrT fn, Args... args) {
+    (*fn)(args...);
+  }
+};
+
+
 class dispatch
 {
 protected:
@@ -51,14 +68,13 @@ protected:
     initializer();
     if(cache == nullptr){
       cache = dlsym(lib_h, name);
-			if(cache == 0)
-				throw std::runtime_error("dlsym unable to load function");
-		}
+      if(cache == 0)
+        throw std::runtime_error("dlsym unable to load function");
+    }
     FunPtrT fptr;
     *reinterpret_cast<void **>(&fptr) = cache;
-    typename return_type<FunPtrT>::type res = (*fptr)(args...);
-    check(res);
-    return res;
+    typedef typename return_type<FunPtrT>::type ret_ty;
+    return forward_ret_impl<ret_ty, FunPtrT, Args...>::call(fptr, args...);
   }
 
 public:
@@ -109,9 +125,9 @@ public:
   static VkResult vkCreateInstance(const VkInstanceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkInstance *pInstance);
   static VkResult vkEnumeratePhysicalDevices(VkInstance instance, uint32_t *pPhysicalDeviceCount, VkPhysicalDevice *pPhysicalDevices);
   static VkResult vkCreateDevice(VkPhysicalDevice physicalDevice, const VkDeviceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDevice *pDevice);
-  static VkResult vkGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue *pQueue);
+  static void vkGetDeviceQueue(VkDevice device, uint32_t queueFamilyIndex, uint32_t queueIndex, VkQueue *pQueue);
   static VkResult vkCreateBuffer(VkDevice device, const VkBufferCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkBuffer *pBuffer);
-  static VkResult vkGetBufferMemoryRequirements(VkDevice device, VkBuffer buffer, VkMemoryRequirements *pMemoryRequirements);
+  static void vkGetBufferMemoryRequirements(VkDevice device, VkBuffer buffer, VkMemoryRequirements *pMemoryRequirements);
   static VkResult vkAllocateMemory(VkDevice device, const VkMemoryAllocateInfo *pAllocateInfo, const VkAllocationCallbacks *pAllocator, VkDeviceMemory *pMemory);
   static VkResult vkBindBufferMemory(VkDevice device, VkBuffer buffer, VkDeviceMemory memory, VkDeviceSize memoryOffset);
   static VkResult vkCreateDescriptorSetLayout(VkDevice device, const VkDescriptorSetLayoutCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkDescriptorSetLayout *pSetLayout);
@@ -123,8 +139,8 @@ public:
   static VkResult vkCreateCommandPool(VkDevice device, const VkCommandPoolCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkCommandPool *pCommandPool);
   static VkResult vkAllocateCommandBuffers(VkDevice device, const VkCommandBufferAllocateInfo *pAllocateInfo, VkCommandBuffer *pCommandBuffers);
   static VkResult vkBeginCommandBuffer(VkCommandBuffer commandBuffer, const VkCommandBufferBeginInfo *pBeginInfo);
-  static VkResult vkCmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipeline pipeline);
-  static VkResult vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, uint32_t descriptorSetCount, const VkDescriptorSet *pDescriptorSets, uint32_t dynamicOffsetCount, const uint32_t *pDynamicOffsets);
+  static void vkCmdBindPipeline(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipeline pipeline);
+  static void vkCmdBindDescriptorSets(VkCommandBuffer commandBuffer, VkPipelineBindPoint pipelineBindPoint, VkPipelineLayout layout, uint32_t firstSet, uint32_t descriptorSetCount, const VkDescriptorSet *pDescriptorSets, uint32_t dynamicOffsetCount, const uint32_t *pDynamicOffsets);
   static VkResult vkCmdDispatch(VkCommandBuffer commandBuffer, uint32_t groupCountX, uint32_t groupCountY, uint32_t groupCountZ);
   static VkResult vkEndCommandBuffer(VkCommandBuffer commandBuffer);
   static VkResult vkCreateFence(VkDevice device, const VkFenceCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkFence *pFence);
@@ -142,9 +158,9 @@ public:
   static VkResult vkDestroyDevice(VkDevice device, const VkAllocationCallbacks *pAllocator);
   static VkResult vkDestroyInstance(VkInstance instance, const VkAllocationCallbacks *pAllocator);
   static VkResult vkGetPhysicalDeviceQueueFamilyProperties(VkPhysicalDevice physicalDevice, uint32_t *pQueueFamilyPropertyCount, VkQueueFamilyProperties *pQueueFamilyProperties);
-  static VkResult vkGetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties *pProperties);
+  static void vkGetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceProperties *pProperties);
   static VkResult vkCreatePipelineLayout(VkDevice device, const VkPipelineLayoutCreateInfo *pCreateInfo, const VkAllocationCallbacks *pAllocator, VkPipelineLayout *pPipelineLayout);
-  static VkResult vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties *pMemoryProperties);
+  static void vkGetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice, VkPhysicalDeviceMemoryProperties *pMemoryProperties);
 
   // CUDA
   static CUresult cuCtxGetCurrent(CUcontext *pctx);
