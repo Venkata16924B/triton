@@ -1,5 +1,6 @@
 #include <algorithm>
 #include <numeric>
+#include <iostream>
 #include "triton/codegen/analysis/axes.h"
 #include "triton/codegen/analysis/align.h"
 #include "triton/codegen/analysis/layout.h"
@@ -214,7 +215,11 @@ layout_scanline_t::layout_scanline_t(size_t num_warps,
   nts.resize(shapes.size());
   mts.resize(shapes.size());
   unsigned i = order[0];
-  nts[i] = clamp(size / num_threads, 1, 4);
+  nts[i] = clamp(size / num_threads, 1, std::min<int>(4, shapes[i]));
+//  std::cout << order[0] << " " << order[1] << " " << order[2] << std::endl;
+//  std::cout << num_threads << " " << size << " " << num_threads << " " << shapes[i] << " " << nts[i] << std::endl;
+//  for(ir::value* v: values)
+//    std::cout << v->get_name() << std::endl;
   mts[i] = clamp(num_threads, 1, shapes[i] / nts[i]);
   num_threads = num_threads / mts[i];
   for(size_t d = 1; d < shapes.size(); d++){

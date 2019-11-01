@@ -526,8 +526,8 @@ void gen_torch_make_launch_function(std::ostream &os, const std::vector<ir::argu
     os << name;
   }
   os << "}, *id_grid_map.at(id), &stream);\n";
-  os << "  };\n  ";
-  os << "  run();";
+  os << "  };\n";
+  os << "  run();\n";
   os << "  if(bench > 0)\n  ";
   os << "    i64scalar_map[bench_id] = triton::tools::bench(run, &stream);\n  ";
   }
