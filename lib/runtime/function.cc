@@ -222,15 +222,8 @@ std::unique_ptr<driver::module> function::make_bin(ir::module &module, driver::c
   codegen::generator isel(&axes, &layouts, &align, &allocation, target.get(), opt.num_warps);
   // run passes
   dce.run(module);
-//  ir::print(module, std::cout);
-
   disassociate.run(module);
-
-//  ir::print(module, std::cout);
-
   dce.run(module);
-//  ir::print(module, std::cout);
-
   peephole.run(module);
   dce.run(module);
   align.run(module);

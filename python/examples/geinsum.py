@@ -298,7 +298,7 @@ void einsumk(TYPE * A
 
 einsum = _einsum.apply
 
-for a_shape, b_shape, expr in [([4, 64, 64, 8, 16], [4,64, 8, 64], 'bmkiq,bkin->bmqn')]:
+for a_shape, b_shape, expr in [([4, 64, 24, 16, 16], [16, 4, 24, 64], 'bmkqi,ibkn->bmqn')]:
     a = np.random.randn(*a_shape).astype(np.float32)
     b = np.random.randn(*b_shape).astype(np.float32)
     rc = np.einsum(expr, a, b)

@@ -102,7 +102,7 @@ def _build(src, path):
       language = 'c++',
       sources = [src],
       include_dirs = include_dirs,
-      extra_compile_args = extra_compile_args,
+      extra_compile_args = extra_compile_args + ['-g0'],
       extra_link_args = extra_link_args,
       library_dirs = library_dirs,
       libraries = libraries,

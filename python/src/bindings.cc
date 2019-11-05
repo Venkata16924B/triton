@@ -562,14 +562,11 @@ std::tuple<std::string,
   std::ostringstream oss;
   oss << R"(
 #include "triton/driver/buffer.h"
-#include "triton/driver/backend.h"
 #include "triton/driver/stream.h"
 #include "triton/runtime/function.h"
 #include "triton/tools/bench.hpp"
-#include "torch/extension.h"
 #include "torch/script.h"
 #include "ATen/cuda/CUDAContext.h"
-#include "ATen/cuda/detail/CUDAHooks.h"
 
 #define CHECK_CUDA(x) AT_ASSERTM(x.type().is_cuda(), #x " must be a CUDA tensor")
 #define CHECK_CONTIGUOUS(x) AT_ASSERTM(x.is_contiguous(), #x " must be contiguous")

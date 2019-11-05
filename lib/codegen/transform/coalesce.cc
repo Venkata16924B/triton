@@ -71,8 +71,10 @@ void coalesce::run(ir::module &mod) {
       extract_io_use(v, io);
     // extract leading axes
     std::map<int, std::vector<ir::io_inst*>> axes;
-    for(ir::io_inst *i: io)
-      extract_ld(i, axes);
+    for(ir::io_inst *i: io){
+      if(i->get_pointer_operand()->get_type()->get_tile_ranks1() == layout_->get(id)->axes.size())
+        extract_ld(i, axes);
+    }
     // update list of values to rematerialize
     if(axes.empty())
       continue;
