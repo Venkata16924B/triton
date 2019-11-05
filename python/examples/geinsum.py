@@ -121,9 +121,11 @@ class _einsum(triton.function):
         cc_strides_a = dict(zip(expr_a, cc_strides_a))
         cc_strides_b = dict(zip(expr_b, cc_strides_b))
         cc_strides_c = dict(zip(expr_c, cc_strides_c))
+        is_delta_a_cst = delta_a.size < 2048
+        is_delta_b_cst = delta_b.size < 2048
 
         src = """
-void einsumk(TYPE * A
+__global__ void einsumk(TYPE * A
             , TYPE * B
             , TYPE * C
             , int matmul_m, int matmul_n, int matmul_k
@@ -182,10 +184,11 @@ void einsumk(TYPE * A
         if not is_delta_a_scalar:
             src += """
     // initialize pointers to A look-up table
-    int *pad[TK] = AD + 0 ... TK;
-    int *padi[TK] = ADI + 0 ... TK;""".format(k = ''.join(axes_k))
+    int *padelta[TK]  = AD  + 0 ... TK;
+    int *padeltai[TK] = ADI + 0 ... TK;""".format(k = ''.join(axes_k))
     
         src += """
+
     // initialize pointers to B
     TYPE *pb[TK, TN, TB] = B"""
         for d in axes_n:
@@ -199,8 +202,8 @@ void einsumk(TYPE * A
         if not is_delta_b_scalar:
             src += """
     // initialize pointers to B look-up table
-    int *pbd[TK] = BD + 0 ... TK;
-    int *pbdi[TK] = BDI + 0 ... TK;""".format(k = ''.join(axes_k))
+    int *pbdelta[TK]  = BD  + 0 ... TK;
+    int *pbdeltai[TK] = BDI + 0 ... TK;""".format(k = ''.join(axes_k))
 
         src += """
     
@@ -216,20 +219,20 @@ void einsumk(TYPE * A
         pa += stride_a_inner;"""
         else:
             src += """
-        pa += (*pad)[newaxis, :, newaxis];
-        int adi[TK] = *padi;
-        pad += adi;
-        padi += adi;"""
+        pa += (*padelta)[newaxis, :, newaxis];
+        int adeltai[TK] = *padeltai;
+        padelta += adeltai;
+        padeltai += adeltai;"""
 
         if is_delta_b_scalar:
             src += """
         pb += stride_b_inner;"""
         else:
             src += """
-        pb += (*pbd)[:, newaxis, newaxis];
-        int bdi[TK] = *pbdi;
-        pbd += bdi;
-        pbdi += bdi;"""
+        pb += (*pbdelta)[:, newaxis, newaxis];
+        int bdeltai[TK] = *pbdeltai;
+        pbdelta += bdeltai;
+        pbdeltai += bdeltai;"""
 
         src += """
         bool checka[TM, TK, TB] = k > TK;
