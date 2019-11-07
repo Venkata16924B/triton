@@ -20,6 +20,7 @@ class _einsum(triton.function):
 
     def unpack_cc(tile, axes):
         ret = ''
+        axes = list(map(str, axes))
         for i, d in enumerate(reversed(axes)):
             if i == len(axes) - 1:
                 break
@@ -50,7 +51,7 @@ __global__ void einsumk(TYPE * A
         src += "\n            "
         for dim, name in zip([expr_a, expr_b, expr_c],
                                 ['a', 'b', 'c']):
-            for d in dim:
+            for d in range(len(dim)):
                 src += f", int stride_{name}_{d}"
             src += "\n            "
         if lut_mode_a == _einsum.LUT_MODE.SCALAR:
@@ -68,7 +69,7 @@ __global__ void einsumk(TYPE * A
 """
         for i, (axes, tile) in enumerate(zip([axes_m, axes_n, axes_b, axes_k],
                                            ['TM', 'TN', 'TB', 'TK'])):
-            currs = ''.join(axes)
+            currs = ''.join(map(str,axes))
             if axes == axes_k:
                 src += f"    int r{currs}[{tile}] = 0 ... {tile};\n"
             else:
@@ -87,39 +88,42 @@ __global__ void einsumk(TYPE * A
 
     // initialize pointers to A
     TYPE *pa[TM, TK, TB] = A"""
-        strides_a = _einsum.strides_cc('a', expr_a)
-        for d in axes_m:
-            src += f" + r{d}[:, newaxis, newaxis] * {strides_a[d]}\n                            "
-        for d in axes_k:
-            src += f" + r{d}[newaxis, :, newaxis] * {strides_a[d]}\n                            "
-        for d in axes_b:
-            src += f" + r{d}[newaxis, newaxis, :] * {strides_a[d]}\n                            "
-        src += ";"
+        for i, sym in enumerate(expr_a):
+            free = sym.free_symbols
+            replace = dict()
+            replace.update({d: sp.symbol._symbol(f'r{d}[:, newaxis, newaxis]') for d in free if d in axes_m})
+            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, :, newaxis]') for d in free if d in axes_k})
+            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, newaxis, :]') for d in free if d in axes_b})
+            sym = sym.subs(replace)
+            src += f" + ({sym}) * stride_a_{i}\n                            "
+        src += ';'
 
         if not lut_mode_a == _einsum.LUT_MODE.SCALAR:
             src += """
     // initialize pointers to A look-up table
     int *padelta[TK]  = AD  + 0 ... TK;
-    int *padeltai[TK] = ADI + 0 ... TK;""".format(k = ''.join(axes_k))
+    int *padeltai[TK] = ADI + 0 ... TK;""".format(k = ''.join(map(str,axes_k)))
     
         src += """
 
     // initialize pointers to B
     TYPE *pb[TK, TN, TB] = B"""
-        strides_b = _einsum.strides_cc('b', expr_b)
-        for d in axes_n:
-            src += f" + r{d}[newaxis, :, newaxis] * {strides_b[d]}\n                            "
-        for d in axes_k:
-            src += f" + r{d}[:, newaxis, newaxis] * {strides_b[d]}\n                            "
-        for d in axes_b:
-            src += f" + r{d}[newaxis, newaxis, :] * {strides_b[d]}\n                            "
-        src += ";"
+        for i, sym in enumerate(expr_b):
+            free = sym.free_symbols
+            replace = dict()
+            replace.update({d: sp.symbol._symbol(f'r{d}[:, newaxis, newaxis]') for d in free if d in axes_k})
+            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, :, newaxis]') for d in free if d in axes_n})
+            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, newaxis, :]') for d in free if d in axes_b})
+            sym = sym.subs(replace)
+            src += f" + ({sym}) * stride_b_{i}\n                            "
+        src += ';'
+
 
         if not lut_mode_b == _einsum.LUT_MODE.SCALAR:
             src += """
     // initialize pointers to B look-up table
     int *pbdelta[TK]  = BD  + 0 ... TK;
-    int *pbdeltai[TK] = BDI + 0 ... TK;""".format(k = ''.join(axes_k))
+    int *pbdeltai[TK] = BDI + 0 ... TK;""".format(k = ''.join(map(str,axes_k)))
 
         src += """
     
@@ -161,23 +165,26 @@ __global__ void einsumk(TYPE * A
 
     // initialize pointers to C
     TYPE *pc[TM, TN, TB] = C"""
-        strides_c = _einsum.strides_cc('c', expr_c)
-        for d in axes_m:
-            src += f" + r{d}[:, newaxis, newaxis] * {strides_c[d]}\n                            "
-        for d in axes_n:
-            src += f" + r{d}[newaxis, :, newaxis] * {strides_c[d]}\n                            "
-        for d in axes_b:
-            src += f" + r{d}[newaxis, newaxis, :] * {strides_c[d]}\n                            "
-        src += """;
-
+        for i, sym in enumerate(expr_c):
+            free = sym.free_symbols
+            replace = dict()
+            replace.update({d: sp.symbol._symbol(f'r{d}[:, newaxis, newaxis]') for d in free if d in axes_m})
+            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, :, newaxis]') for d in free if d in axes_n})
+            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, newaxis, :]') for d in free if d in axes_b})
+            sym = sym.subs(replace)
+            src += f" + ({sym}) * stride_c_{i}\n                            "
+        src += ';'
+    
+        src += """
     // write-back
-    bool checkm[TM] = rm < matmul_m;
-    bool checkn[TN] = rn < matmul_n;
+    bool checkm[TM] = r""" + ''.join(map(str,axes_m)) + """ < matmul_m;
+    bool checkn[TN] = r""" + ''.join(map(str,axes_n)) + """ < matmul_n;
     bool checkc[TM, TN, TB] = checkm[:, newaxis, newaxis] && 
                               checkn[newaxis, :, newaxis];
     *?(checkc)pc = (TYPE[TM, TN, TB])c;
 }
 """
+        print(src)
         return triton.kernel(src, ['C'])
 
     ############################
@@ -358,7 +365,6 @@ __global__ void einsumk(TYPE * A
             _einsum.cache[key] = _einsum.make_kernel(sym_a, sym_b, sym_c, 
                                                      axes_m, axes_n, axes_k, axes_b, 
                                                      lut_mode_a, lut_mode_b)
-        exit()
         kernel = _einsum.cache[key]
         # execute kernel
         c = triton.empty(shape_c, a.dtype)
@@ -400,7 +406,12 @@ __global__ void einsumk(TYPE * A
 
 einsum = _einsum.apply
 
-for a_shape, b_shape, expr in [([16, 16, 16, 16], [16, 3, 3, 16], 'nc(p+r)(q+s),crsk->nkpq')]:
+for a_shape, b_shape, expr in [([16, 16, 16, 16], [16, 16, 3, 3], 'nc(p+r)(q+s),kcrs->nkpq')]:
     a = np.random.randn(*a_shape).astype(np.float32)
     b = np.random.randn(*b_shape).astype(np.float32)
-    tc = einsum(expr, torch.from_numpy(a).cuda(), torch.from_numpy(b).cuda())
+    a = torch.from_numpy(a).cuda()
+    b = torch.from_numpy(b).cuda()
+    rc = torch.nn.functional.conv2d(a, b)
+    tc = einsum(expr, a, b)
+
+    print(tc - rc)
