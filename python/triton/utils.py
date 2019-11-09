@@ -47,16 +47,23 @@ class id_dict:
       return libtriton.retrieve_scalar(self.id)
 
   def __init__(self):
-    self.data = weakref.WeakKeyDictionary()
+    self.data = dict()
 
   def __delitem__(self, key):
     del self.data[key]
 
-  def __getitem__(self, key):
+  @staticmethod
+  def _get_key(key):
     if fw.has_tensorflow():
       if isinstance(key, fw.tensorflow.Tensor):
-        key = key.op
-    ret = self.data[key]
+        key = id(key.op)
+    if fw.has_torch():
+      if isinstance(key, fw.torch.Tensor):
+        key = id(key)
+    return key
+
+  def __getitem__(self, key):
+    ret = self.data[id_dict._get_key(key)]
     if isinstance(ret, id_dict.lazy_entry):
       return ret.get()
     return ret
@@ -65,7 +72,4 @@ class id_dict:
     return len(self.data)
 
   def __setitem__(self, key, value):
-    if fw.has_tensorflow():
-      if isinstance(key, fw.tensorflow.Tensor):
-        key = key.op
-    self.data[key] = value
+    self.data[id_dict._get_key(key)] = value

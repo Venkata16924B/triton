@@ -504,23 +504,23 @@ void generator::visit_atomic_cas_inst(ir::atomic_cas_inst* cas) {
   Value *pred = builder_->CreateICmpEQ(tid, builder_->getInt32(0));
   BasicBlock *tid_0_bb = BasicBlock::Create(*ctx_, "tid_0", current->getParent());
   BasicBlock *tid_0_done_bb = BasicBlock::Create(*ctx_, "tid_0_done", current->getParent());
-  Value *ptr = builder_->CreateGEP(sh_mem_ptr_, builder_->getInt32(alloc_->offset(layouts_->get(cas))));
-  ptr = builder_->CreateBitCast(ptr, PointerType::get(builder_->getInt32Ty(), ptr->getType()->getPointerAddressSpace()));
-  tgt_->add_memfence(module, *builder_);
   tgt_->add_barrier(module, *builder_);
   builder_->CreateCondBr(pred, tid_0_bb, tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_bb);
   Value *cas_ptr = vmap_.at(cas->get_operand(0));
   Value *cas_cmp = vmap_.at(cas->get_operand(1));
   Value *cas_val = vmap_.at(cas->get_operand(2));
-  Value *old = builder_->CreateAtomicCmpXchg(cas_ptr, cas_cmp, cas_val, AtomicOrdering::Monotonic, AtomicOrdering::Monotonic);
+  tgt_->add_memfence(module, *builder_);
+  Value *old = builder_->CreateAtomicCmpXchg(cas_ptr, cas_cmp, cas_val,
+                                             AtomicOrdering::Monotonic,
+                                             AtomicOrdering::Monotonic);
   old = builder_->CreateExtractValue(old, {0});
-  builder_->CreateStore(old, ptr);
+  builder_->CreateStore(old, atom_ptr_);
   builder_->CreateBr(tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_done_bb);
   tgt_->add_memfence(module, *builder_);
   tgt_->add_barrier(module, *builder_);
-  vmap_[cas] = builder_->CreateLoad(ptr);
+  vmap_[cas] = builder_->CreateLoad(atom_ptr_);
 }
 
 void generator::visit_atomic_exch_inst(ir::atomic_exch_inst* xchg) {
@@ -536,11 +536,14 @@ void generator::visit_atomic_exch_inst(ir::atomic_exch_inst* xchg) {
   tgt_->add_barrier(module, *builder_);
   builder_->CreateCondBr(pred, tid_0_bb, tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_bb);
-  vmap_[xchg] = builder_->CreateAtomicRMW(AtomicRMWInst::Xchg, rmw_ptr, rmw_val, AtomicOrdering::Monotonic, SyncScope::System);
+  builder_->CreateAtomicRMW(AtomicRMWInst::Xchg, rmw_ptr, rmw_val,
+                                          AtomicOrdering::Monotonic,
+                                          SyncScope::System);
+//  tgt_->add_memfence(module, *builder_);
   builder_->CreateBr(tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_done_bb);
-  tgt_->add_memfence(module, *builder_);
-  tgt_->add_barrier(module, *builder_);
+//  tgt_->add_memfence(module, *builder_);
+//  tgt_->add_barrier(module, *builder_);
 }
 
 void generator::visit_atomic_add_inst(ir::atomic_add_inst*) {
@@ -1126,12 +1129,17 @@ void generator::visit(ir::module &src, llvm::Module &dst) {
   if(tgt_->is_gpu())
   if(unsigned alloc_size = alloc_->allocated_size()){
     Type *int_8_ty = Type::getInt8Ty(*ctx_);
+    Type *int_32_ty = Type::getInt32Ty(*ctx_);
     ArrayType *array_ty = ArrayType::get(int_8_ty, alloc_size);
     Type *ptr_ty = PointerType::get(int_8_ty, 3);
     GlobalVariable *sh_mem_array =
       new GlobalVariable(*mod_, array_ty, false, GlobalVariable::ExternalLinkage,
                          nullptr, "__shared_ptr", nullptr, GlobalVariable::NotThreadLocal, 3);
     sh_mem_ptr_ = builder_->CreateBitCast(sh_mem_array, ptr_ty);
+    GlobalVariable *_atom_ptr =
+      new GlobalVariable(*mod_, ArrayType::get(int_32_ty, 1), false, GlobalVariable::ExternalLinkage,
+                         nullptr, "__atom_ptr", nullptr, GlobalVariable::NotThreadLocal, 3);
+    atom_ptr_ = builder_->CreateBitCast(_atom_ptr, PointerType::get(int_32_ty, 3));
   }
   // allocate constant memory
   for(ir::alloc_const *x: src.allocs())

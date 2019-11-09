@@ -68,6 +68,9 @@ static const std::map<ir::value_id_t, inst_storage_info_t> storage_info = {
   { ir::INST_UNCOND_BRANCH,        {NONE,        {}}},
   { ir::INST_COND_BRANCH,          {NONE,        {REPLICATED}}},
   // intrinsics
+  { ir::INST_ATOMIC_CAS,           {DISTRIBUTED,      {DISTRIBUTED}}},
+  { ir::INST_ATOMIC_EXCH,          {DISTRIBUTED,      {DISTRIBUTED}}},
+
   { ir::INST_COPY_TO_SHARED,       {SHARED,      {DISTRIBUTED}}},
   { ir::INST_COPY_FROM_SHARED,     {DISTRIBUTED, {SHARED}}},
   { ir::INST_BARRIER,              {NONE,        {}}},

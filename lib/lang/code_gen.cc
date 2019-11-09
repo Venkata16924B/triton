@@ -147,7 +147,7 @@ void Generator::VisitBinaryOp(BinaryOp* binary) {
       if(flt)
         return set_ret(bld_->create_fcmpONE(lhs, rhs));
       else
-        return set_ret(bld_->create_icmpEQ(lhs, rhs));
+        return set_ret(bld_->create_icmpNE(lhs, rhs));
     default:
       error_not_implemented();
   }
@@ -232,10 +232,44 @@ void Generator::VisitFuncCall(FuncCall* funcCall) {
     else
       return should_not_happen();
   }
+  if(name == "get_num_programs"){
+    VisitExpr(funcCall->Args()->at(0));
+    ir::value* ret = ret_;
+    if(auto axis = dynamic_cast<ir::constant_int*>(ret))
+      return set_ret(bld_->create_get_num_program(axis->get_value()));
+    else
+      return should_not_happen();
+  }
+  if(name == "atomic_cas"){
+    VisitExpr(funcCall->Args()->at(0));
+    ir::value* ptr = ret_;
+    VisitExpr(funcCall->Args()->at(1));
+    ir::value* cmp = ret_;
+    VisitExpr(funcCall->Args()->at(2));
+    ir::value* val = ret_;
+    return set_ret(bld_->create_atomic_cas(ptr, cmp, val));
+  }
+  if(name == "atomic_xchg"){
+    VisitExpr(funcCall->Args()->at(0));
+    ir::value* ptr = ret_;
+    VisitExpr(funcCall->Args()->at(1));
+    ir::value* val = ret_;
+    return set_ret(bld_->create_atomic_exch(ptr, val));
+  }
   if(name == "sqrtf"){
     VisitExpr(funcCall->Args()->at(0));
     ir::value* ret = ret_;
     return set_ret(bld_->create_sqrt(ret));
+  }
+  //TODO: integrate this into conditionalop
+  if(name == "select"){
+    VisitExpr(funcCall->Args()->at(0));
+    ir::value* cond = ret_;
+    VisitExpr(funcCall->Args()->at(1));
+    ir::value* true_val = ret_;
+    VisitExpr(funcCall->Args()->at(2));
+    ir::value* false_val = ret_;
+    return set_ret(bld_->create_select(cond, true_val, false_val));
   }
   return error_not_implemented();
 }
@@ -350,12 +384,14 @@ void Generator::VisitForStmt(ForStmt *forStmt) {
     ir::value *cond = ret_;
     return bld_->create_cond_br(cond, loop_bb, next_bb);
   });
-  VisitStmt(init_);
+  if(init_)
+    VisitStmt(init_);
   VisitExpr(cond_);
   ir::value *cond = ret_;
   bld_->create_cond_br(cond, loop_bb, next_bb);
   bld_->set_insert_point(loop_bb);
-  VisitStmt(body_);
+  if(body_)
+    VisitStmt(body_);
   if(!is_terminator(ret_))
     mod_->get_continue_fn()();
   ir::basic_block *stop_bb = bld_->get_insert_block();

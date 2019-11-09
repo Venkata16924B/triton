@@ -6,6 +6,8 @@ import hashlib
 import sysconfig
 import sys
 import weakref
+import contextlib
+import io
 # import for just-in-time compilation
 import distutils
 import setuptools.command.build_ext
@@ -56,7 +58,16 @@ def _write_bindings(src, root):
       handle.writelines(src)
   # return path of cpp file
   return (cpp, so)
-  
+
+@contextlib.contextmanager
+def quiet():
+    old_stdout, old_stderr = sys.stdout, sys.stderr
+    sys.stdout, sys.stderr = io.StringIO(), io.StringIO()
+    try:
+        yield
+    finally:
+        sys.stdout, sys.stderr = old_stdout, old_stderr
+
 def _build(src, path):
   ccdir = os.path.join(libtriton.__file__, os.path.pardir)
   ccdir = os.path.realpath(ccdir)
@@ -119,7 +130,8 @@ def _build(src, path):
       ext_modules = [ext],
       script_args = args,
   ) 
-  setuptools.setup(**args)
+  with quiet():
+    setuptools.setup(**args)
   shutil.rmtree(tmp)
 
 def _cvt_to_def_str(obj):
@@ -204,7 +216,7 @@ class kernel:
         defines.append((k, values))
       opt = libtriton.options_space()
       opt.defines = defines
-      opt.num_warps = [4]
+      opt.num_warps = [2, 4, 8]
       # create unique id for this op
       op_id = libtriton.make_op_id()
       self.fw_id[key] = op_id
@@ -255,6 +267,6 @@ class kernel:
       args = [x.contiguous() if isinstance(x, fw.torch.Tensor) else x for x in args[:-1]]
       ret = self.fw_op(op_id, bench, bench_id, *args)
       if bench > 0:
-        bench_registry[ret] = libtriton.retrieve_scalar(op_id)
+        bench_registry[ret] = libtriton.retrieve_scalar(bench_id)
     else:
       assert False

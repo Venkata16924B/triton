@@ -245,7 +245,6 @@ std::unique_ptr<driver::module> function::make_bin(ir::module &module, driver::c
   if(allocation.allocated_size() > context->device()->max_shared_memory())
     return std::unique_ptr<driver::module>();
   barriers.run(module);
-//  std::cout << "isel" << std::endl;
   isel.visit(module, *llvm);
   // return binary
   std::unique_ptr<driver::module> res(driver::module::create(context, std::move(llvm)));
@@ -266,8 +265,12 @@ R"(
 #define __aligned(A)    __attribute__((aligned(A)))
 #define __multipleof(A) __attribute__((multipleof(A)))
 
+extern int atomic_cas(int*, int, int);
+extern int atomic_xchg(int*, int);
 extern int get_program_id(int);
+extern int get_num_programs(int);
 extern float sqrtf(float);
+extern int select(bool, int, int);
 )";
 }
 
