@@ -21,12 +21,12 @@ MNK = [
        (4096, 32, 4096),
        (4096, 64, 4096)
       ]
-#for M, N, K in MNK:
-#    configs += [([M, K], [K, N], 'mk,kn->mn')]
-#for M, N, K in MNK:
-#    configs += [([M, K], [M, N], 'mk,mn->kn')]
-#for M, N, K in MNK:
-#    configs += [([M, N], [K, N], 'mn,kn->mk')]
+for M, N, K in MNK:
+    configs += [([M, K], [K, N], 'mk,kn->mn')]
+for M, N, K in MNK:
+    configs += [([M, K], [M, N], 'mk,mn->kn')]
+for M, N, K in MNK:
+    configs += [([M, N], [K, N], 'mn,kn->mk')]
 
 # Relative attention
 NTHSE = [
@@ -44,8 +44,8 @@ for N, T, H, S, E in NTHSE:
 
 # Benchmark
 for a_shape, b_shape, expr in configs:
-    a = np.random.randn(*a_shape).astype(np.float32)
-    b = np.random.randn(*b_shape).astype(np.float32)
+    a = np.random.randn(*a_shape).astype(np.float16)
+    b = np.random.randn(*b_shape).astype(np.float16)
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
     rc = torch.einsum(expr, a, b)

@@ -111,7 +111,7 @@ bool triton_dot(drv::stream* stream, bool AT, bool BT,
   if(mode == BENCH) {
     opt.defines.push_back({"TM", {"64", "128"}});
     opt.defines.push_back({"TN", {"64", "128"}});
-    opt.defines.push_back({"TK", {"8"}});
+    opt.defines.push_back({"TK", {to_string<T>::value == "half" ? "16" : "8"}});
     opt.num_warps = {2, 4, 8};
   }
 

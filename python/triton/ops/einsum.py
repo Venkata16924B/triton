@@ -416,7 +416,8 @@ __global__ void {name}(TYPE * A
         kernel = _einsum.cache[name]
         locks = torch.zeros(2*1024*1024, dtype=torch.int32).cuda()
         # execute kernel
-        c = triton.empty(shape_c, a.dtype)
+        dtype = a.dtype
+        c = triton.empty(shape_c, dtype)
         matmul_m = reduce(mul, dim_m.values(), 1)
         matmul_n = reduce(mul, dim_n.values(), 1)
         matmul_k = reduce(mul, dim_k.values(), 1)
@@ -464,7 +465,7 @@ __global__ void {name}(TYPE * A
                               triton.cdiv(matmul_n, opt.d('TN')),
                               triton.cdiv(matmul_b, opt.d('TB')),
                               opt.d('TZ')]]
-        kernel(*args, bench=bench, TM=TM, TN=TN, TK=TK, TZ=TZ, TYPE='float', TB=TB)
+        kernel(*args, bench=bench, TM=TM, TN=TN, TK=TK, TZ=TZ, TYPE=dtype, TB=TB)
         # save information in context
         ctx.flops = 2. * matmul_b * matmul_m * matmul_n * matmul_k
         return c

@@ -168,8 +168,8 @@ layout_hmma_884_t::layout_hmma_884_t(size_t num_warps,
                                      const std::vector<ir::value *> &values, ir::type *_ty, size_t _id,
                                      analysis::align* align): layout_t(HMMA_884, _axes, _shapes, values, _ty, _id, align) {
 
-  unsigned shape_0 = shapes[order[0]];
-  unsigned shape_1 = shapes[order[1]];
+  unsigned shape_0 = shapes[0];
+  unsigned shape_1 = shapes[1];
   /* fragments per warp */
   // try to make things as square as possible to maximize data re-use
   fpw = {1, 1, 1};
