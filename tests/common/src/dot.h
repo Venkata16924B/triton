@@ -2,7 +2,9 @@ namespace src {
 
     const char *dot =
 R"(
-void dot(TYPE * A, TYPE * B, TYPE * C,
+void dot(TYPE * A __noalias __readonly __aligned(16),
+         TYPE * B __noalias __readonly __aligned(16),
+         TYPE * C,
          int M, int N, int K,
          int lda __multipleof(8),
          int ldb __multipleof(8),
@@ -18,8 +20,10 @@ void dot(TYPE * A, TYPE * B, TYPE * C,
   TYPE* pa[SHAPE_A] = A + rk[BROADCAST_AK] * STRIDE_AK + rm[BROADCAST_AM] * STRIDE_AM;
   TYPE* pb[SHAPE_B] = B + rk[BROADCAST_BK] * STRIDE_BK + rn[BROADCAST_BN] * STRIDE_BN;
   // prefetches operands
-  TYPE a[SHAPE_A] = *pa;
-  TYPE b[SHAPE_B] = *pb;
+  bool checka[SHAPE_A] = rk[BROADCAST_AK] < K;
+  bool checkb[SHAPE_B] = rk[BROADCAST_BK] < K;
+  TYPE a[SHAPE_A] = checka ? *pa : 0;
+  TYPE b[SHAPE_B] = checkb ? *pb : 0;
   // reduction loop
   for(int k = K; k > 0; k-= TK){
     c += USEA @ USEB;
@@ -31,8 +35,11 @@ void dot(TYPE * A, TYPE * B, TYPE * C,
     b = checkb ? *pb : 0;
   }
   // epilogue
-  TYPE* pc[TM, TN] = C + rm[:, newaxis] + rn[newaxis, :] * ldc;
-  *pc = c;
+  int rxm[TM] = get_program_id(0) * TM + 0 ... TM;
+  int rxn[TN] = get_program_id(1) * TN + 0 ... TN;
+  TYPE* pc[TM, TN] = C + rxm[:, newaxis] + rxn[newaxis, :] * ldc;
+  bool checkc[TM, TN] = rxm[:, newaxis] && rxn[newaxis, :];
+  *?(checkc)pc = c;
 }
 )";
 

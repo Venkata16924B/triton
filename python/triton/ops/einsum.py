@@ -43,8 +43,9 @@ class _einsum(triton.function):
                     lut_mode_a, lut_mode_b):
 
         src = f"""
-__global__ void {name}(TYPE * A
-            , TYPE * B
+__global__ void {name}(
+              TYPE * A __noalias __readonly __aligned(16)
+            , TYPE * B __noalias __readonly __aligned(16)
             , TYPE * C
             , int * locks
             , int matmul_m, int matmul_n, int matmul_k __multipleof(64)
@@ -150,16 +151,20 @@ __global__ void {name}(TYPE * A
             src += """
     // initialize pointers to B look-up table
     int *pbdelta[TK]  = BD  + 0 ... TK;
-    int *pbdeltai[TK] = BDI + 0 ... TK;""".format(k = ''.join(map(str,axes_k)))
+    int *pbdeltai[TK] = BDI + 0 ... TK;"""
 
         src += """
     
     // accumulate
-    float acc[TM, TN, TB] = 0;
-    TYPE a[TM, TK, TB] = *pa;
-    TYPE b[TK, TN, TB] = *pb;
-    for(int k = matmul_k; k > 0; k -= TK) {
-        acc += a @ b;"""
+    float acc[TM, TN, TB] = 0;"""
+        ksuffix = ''.join(map(str,axes_k))
+        src += """
+    bool checka[TM, TK, TB] = r{ksuffix}[newaxis, :, newaxis] < off_k + matmul_k;
+    bool checkb[TK, TN, TB] = r{ksuffix}[:, newaxis, newaxis] < off_k + matmul_k;
+    TYPE a[TM, TK, TB] = checka ? *pa : 0;
+    TYPE b[TK, TN, TB] = checkb ? *pb : 0;
+    for(int k = matmul_k; k > 0; k -= TK) {{
+        acc += a @ b;""".format(ksuffix = ksuffix)
 
         if lut_mode_a == _einsum.LUT_MODE.SCALAR:
             src += """
@@ -187,6 +192,7 @@ __global__ void {name}(TYPE * A
         a = checka ? *pa : 0;
         b = checkb ? *pb : 0;
     }"""
+
 
         src += """
 
