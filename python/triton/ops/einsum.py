@@ -47,7 +47,8 @@ __global__ void {name}(TYPE * A
             , TYPE * B
             , TYPE * C
             , int * locks
-            , int matmul_m, int matmul_n, int matmul_k
+            , int matmul_m, int matmul_n, int matmul_k __multipleof(64)
+            , int div_m
             """
         for dim in [axes_m, axes_n, axes_k, axes_b]:
             for d in dim:
@@ -73,7 +74,6 @@ __global__ void {name}(TYPE * A
 
     // re-order outer program ids
     int grid_n = (matmul_n + TN - 1) / TN;
-    int div_m = 1;
     int pid_mn = get_program_id(0) / div_m;
     int pid_n = pid_mn % grid_n;
     int pid_m = (pid_mn / grid_n)*div_m + (get_program_id(0) % div_m);
@@ -84,8 +84,8 @@ __global__ void {name}(TYPE * A
     // get reduction sub-group program id
     int pid_z = get_program_id(2);
     int grid_z = get_num_programs(2);
-    int div_z = matmul_k / grid_z;
-    int rem_z = matmul_k % grid_z;
+    int div_z = matmul_k / TZ;
+    int rem_z = matmul_k % TZ;
     int off_k = pid_z * div_z;
     matmul_k = select(pid_z < rem_z, div_z, div_z + rem_z);
 
@@ -96,7 +96,7 @@ __global__ void {name}(TYPE * A
                                    ['pid_m', 'pid_n', 'pid_b', '']):
             currs = ''.join(map(str,axes))
             if axes == axes_k:
-                src += f"    int r{currs}[{tile}] = 0 ... {tile};\n"
+                src += f"    int r{currs}[{tile}] = off_k + 0 ... {tile};\n"
             else:
                 src += f"    int r{currs}[{tile}] = {pid} * {tile} + 0 ... {tile};\n"
         
@@ -357,6 +357,13 @@ __global__ void {name}(TYPE * A
         return shape_c
 
     @staticmethod
+    def divto4(val):
+        for N in [4, 3, 5, 2, 7]:
+            if val % N == 0:
+                return N
+        return 1
+
+    @staticmethod
     def forward(ctx, einsum, a, b, bench):
         # parse symbols
         expr_a, expr_bc = einsum.split(",")
@@ -427,6 +434,7 @@ __global__ void {name}(TYPE * A
         args += [a, b, c]
         args += [locks]
         args += [matmul_m, matmul_n, matmul_k]
+        args += [_einsum.divto4(ceil(matmul_n / 128))]
         # dims
         args += [dim_m[d] for d in axes_m]
         args += [dim_n[d] for d in axes_n]
