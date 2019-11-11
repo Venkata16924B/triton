@@ -96,7 +96,7 @@ __global__ void {name}(TYPE * A
                                    ['pid_m', 'pid_n', 'pid_b', '']):
             currs = ''.join(map(str,axes))
             if axes == axes_k:
-                src += f"    int r{currs}[{tile}] = off_k + 0 ... {tile};\n"
+                src += f"    int r{currs}[{tile}] = 0 ... {tile};\n"
             else:
                 src += f"    int r{currs}[{tile}] = {pid} * {tile} + 0 ... {tile};\n"
         
@@ -227,6 +227,7 @@ __global__ void {name}(TYPE * A
 #endif
 }
 """
+        #print(src)
         return triton.kernel(src, ['C'])
 
     ############################
@@ -395,7 +396,7 @@ __global__ void {name}(TYPE * A
         dim_m = {d: dims[d] for d in axes_m}
         dim_n = {d: dims[d] for d in axes_n}
         # look-up tables
-        TK = 8
+        TK = 16
         delta_a, diff_a = _einsum.make_delta(axes_k, TK, shape_a, dims, sym_a)
         delta_b, diff_b = _einsum.make_delta(axes_k, TK, shape_b, dims, sym_b)
         # look-up mode
@@ -417,7 +418,7 @@ __global__ void {name}(TYPE * A
         locks = torch.zeros(2*1024*1024, dtype=torch.int32).cuda()
         # execute kernel
         dtype = a.dtype
-        c = triton.empty(shape_c, dtype)
+        c = triton.empty(shape_c, dtype=dtype)
         matmul_m = reduce(mul, dim_m.values(), 1)
         matmul_n = reduce(mul, dim_n.values(), 1)
         matmul_k = reduce(mul, dim_k.values(), 1)
