@@ -199,8 +199,29 @@ __global__ void {name}(
         b = checkb ? *pb : 0;
     }}
     acc = acc * alpha;
-    """
 
+    // rematerialize
+    grid_n = (matmul_n + TN - 1) / TN;
+    pid_mn = get_program_id(0) / div_m;
+    pid_n = pid_mn % grid_n;
+    pid_m = (pid_mn / grid_n)*div_m + (get_program_id(0) % div_m);
+    pid_b = get_program_id(1);
+ """
+
+        for axes, tile, pid in zip([axes_m, axes_n, axes_b],
+                                   ['TM', 'TN', 'TB'],
+                                   ['pid_m', 'pid_n', 'pid_b']):
+            currs = ''.join(map(str,axes))
+            if axes:
+                src += f"    int rc{currs}[{tile}] = {pid} * {tile} + 0 ... {tile};\n"
+        
+
+        if axes_m:
+            src += _einsum.unpack_cc('TM', axes_m, 'rc')
+        if axes_n:
+            src += _einsum.unpack_cc('TN', axes_n, 'rc')
+        if axes_b:
+            src += _einsum.unpack_cc('TB', axes_b, 'rc')
 
         src += """
 
@@ -209,9 +230,9 @@ __global__ void {name}(
         for i, sym in enumerate(expr_c):
             free = sym.free_symbols
             replace = dict()
-            replace.update({d: sp.symbol._symbol(f'r{d}[:, newaxis, newaxis]') for d in free if d in axes_m})
-            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, :, newaxis]') for d in free if d in axes_n})
-            replace.update({d: sp.symbol._symbol(f'r{d}[newaxis, newaxis, :]') for d in free if d in axes_b})
+            replace.update({d: sp.symbol._symbol(f'rc{d}[:, newaxis, newaxis]') for d in free if d in axes_m})
+            replace.update({d: sp.symbol._symbol(f'rc{d}[newaxis, :, newaxis]') for d in free if d in axes_n})
+            replace.update({d: sp.symbol._symbol(f'rc{d}[newaxis, newaxis, :]') for d in free if d in axes_b})
             sym = sym.subs(replace)
             stride = f'stride_c_{i}' if i < len(expr_c) - 1 else '1'
             src += f" + ({sym}) * {stride}\n                            "
@@ -219,8 +240,8 @@ __global__ void {name}(
     
         src += """
     // bounds-checking
-    bool checkm[TM] = r""" + ''.join(map(str,axes_m)) + """ < matmul_m;
-    bool checkn[TN] = r""" + ''.join(map(str,axes_n)) + """ < matmul_n;
+    bool checkm[TM] = rc""" + ''.join(map(str,axes_m)) + """ < matmul_m;
+    bool checkn[TN] = rc""" + ''.join(map(str,axes_n)) + """ < matmul_n;
     bool checkc[TM, TN, TB] = checkm[:, newaxis, newaxis] && 
                               checkn[newaxis, :, newaxis];
 
