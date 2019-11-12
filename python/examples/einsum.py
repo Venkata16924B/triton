@@ -6,9 +6,9 @@ configs = []
 
 # Matrix multiplication
 MNK = [
-       (512 , 512 , 512 ), 
+       (512, 512 ,512), 
        (2048, 2048, 2048), 
-       (8192, 8192, 8192),
+       #(8192, 8192, 8192),
        (64, 64, 64000),
        (64, 64, 128000),
        (256, 256, 64000),
@@ -44,8 +44,8 @@ for N, T, H, S, E in NTHSE:
 
 # Benchmark
 for a_shape, b_shape, expr in configs:
-    a = np.random.randn(*a_shape).astype(np.float16)
-    b = np.random.randn(*b_shape).astype(np.float16)
+    a = np.random.randn(*a_shape).astype(np.float32)
+    b = np.random.randn(*b_shape).astype(np.float32)
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
     rc = torch.einsum(expr, a, b)

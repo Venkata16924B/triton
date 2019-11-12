@@ -351,10 +351,9 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
     unsigned id = linear / vector_size;
     if(linear % vector_size == 0) {
       Value *ptr = pointers->get_value(idx);
-
-
       ptr = builder_->CreateBitCast(ptr, PointerType::get(VectorType::get(result->get_ty(), vector_size),
                                                         ptr->getType()->getPointerAddressSpace()));
+
       Value *mask = masks->get_value(idx);
       BasicBlock *current_bb = builder_->GetInsertBlock();
       Function *parent = builder_->GetInsertBlock()->getParent();
@@ -386,9 +385,9 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
 //          if(cst)
 //            offset = " + " + std::to_string(cst->getValue().getSExtValue()*2*vector_size);
 //          Type *fp16x2_ty = VectorType::get(builder_->getHalfTy(), 2);
-//          Type *fp16x2_pack4_ty = StructType::get(ctx, {fp16x2_ty, fp16x2_ty, fp16x2_ty, fp16x2_ty});
+//          Type *fp16x2_pack4_ty = StructType::get(*ctx_, {fp16x2_ty, fp16x2_ty, fp16x2_ty, fp16x2_ty});
 //          FunctionType *ty = FunctionType::get(fp16x2_pack4_ty, {mask->getType(), ptr->getType()}, false);
-//          std::string asm_str = "@$0 ld.global.nc.b32 {$1, $2, $3, $4}, [$5" + offset + "];";
+//          std::string asm_str = "@$0 ld.global.nc.v4.b32 {$1, $2, $3, $4}, [$5" + offset + "];";
 //          if(false_values)
 //            asm_str += "\n\t@!$0 mov.v4.b32 {$1, $2, $3, $4}, {0, 0, 0, 0};";
 //          InlineAsm *iasm = InlineAsm::get(ty, asm_str, "b,=r,=r,=r,=r,l", true);
@@ -427,24 +426,30 @@ void generator::visit_masked_store_inst(ir::masked_store_inst* st) {
     Value *scalar = scalars->get_value(idx);
     Value *ptr = ptrs->get_value(idx);
     Value *pred = preds->get_value(idx);
-    Function *parent = builder_->GetInsertBlock()->getParent();
-    BasicBlock *mask_then_bb = BasicBlock::Create(*ctx_, "mask_then", parent);
-    BasicBlock *mask_done_bb = BasicBlock::Create(*ctx_, "mask_done", parent);
-    builder_->CreateCondBr(pred, mask_then_bb, mask_done_bb);
-    builder_->SetInsertPoint(mask_then_bb);
-    builder_->CreateStore(scalar, ptr);
-    builder_->CreateBr(mask_done_bb);
-    builder_->SetInsertPoint(mask_done_bb);
-//      std::string offset = "";
-//      if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
-//      if(gep->getNumIndices() == 1)
-//      if(ConstantInt *cst = dyn_cast<ConstantInt>(gep->idx_begin())){
-//        offset = " + " + std::to_string(cst->getValue().getSExtValue()*4);
-//      }
-//      FunctionType *ty = FunctionType::get(Type::getVoidTy(ctx), {pred->getType(), ptr->getType(), scalar->getType()}, false);
-//      std::string asm_str = "@$0 st.global.b32 [$1" + offset + "], $2;";
-//      InlineAsm *iasm = InlineAsm::get(ty, asm_str, "b,l,f", true);
-//      builder.CreateCall(iasm, {pred, ptr, scalar});
+//    Function *parent = builder_->GetInsertBlock()->getParent();
+//    BasicBlock *mask_then_bb = BasicBlock::Create(*ctx_, "mask_then", parent);
+//    BasicBlock *mask_done_bb = BasicBlock::Create(*ctx_, "mask_done", parent);
+//    builder_->CreateCondBr(pred, mask_then_bb, mask_done_bb);
+//    builder_->SetInsertPoint(mask_then_bb);
+//    builder_->CreateStore(scalar, ptr);
+//    builder_->CreateBr(mask_done_bb);
+//    builder_->SetInsertPoint(mask_done_bb);
+
+    Type *scaty = scalar->getType();
+    unsigned nbits = scaty->getScalarSizeInBits();
+    unsigned nbytes = nbits / 8;
+    std::string suffix = nbits == 32 ? "f" : "h";
+    std::string offset = "";
+    if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
+    if(gep->getNumIndices() == 1)
+    if(ConstantInt *cst = dyn_cast<ConstantInt>(gep->idx_begin())){
+      offset = " + " + std::to_string(cst->getValue().getSExtValue()*nbytes);
+      ptr = gep->getPointerOperand();
+    }
+    FunctionType *ty = FunctionType::get(builder_->getVoidTy(), {pred->getType(), ptr->getType(), scalar->getType()}, false);
+    std::string asm_str = "@$0 st.global.b" + std::to_string(nbits) + " [$1" + offset + "], $2;";
+    InlineAsm *iasm = InlineAsm::get(ty, asm_str, "b,l," + suffix, true);
+    builder_->CreateCall(iasm, {pred, ptr, scalar});
   });
 }
 
@@ -505,12 +510,12 @@ void generator::visit_atomic_cas_inst(ir::atomic_cas_inst* cas) {
   BasicBlock *tid_0_bb = BasicBlock::Create(*ctx_, "tid_0", current->getParent());
   BasicBlock *tid_0_done_bb = BasicBlock::Create(*ctx_, "tid_0_done", current->getParent());
   tgt_->add_barrier(module, *builder_);
+  tgt_->add_memfence(module, *builder_);
   builder_->CreateCondBr(pred, tid_0_bb, tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_bb);
   Value *cas_ptr = vmap_.at(cas->get_operand(0));
   Value *cas_cmp = vmap_.at(cas->get_operand(1));
   Value *cas_val = vmap_.at(cas->get_operand(2));
-  tgt_->add_memfence(module, *builder_);
   Value *old = builder_->CreateAtomicCmpXchg(cas_ptr, cas_cmp, cas_val,
                                              AtomicOrdering::Monotonic,
                                              AtomicOrdering::Monotonic);
@@ -533,17 +538,14 @@ void generator::visit_atomic_exch_inst(ir::atomic_exch_inst* xchg) {
   BasicBlock *tid_0_bb = BasicBlock::Create(*ctx_, "tid_0", current->getParent());
   BasicBlock *tid_0_done_bb = BasicBlock::Create(*ctx_, "tid_0_done", current->getParent());
   tgt_->add_memfence(module, *builder_);
-  tgt_->add_barrier(module, *builder_);
   builder_->CreateCondBr(pred, tid_0_bb, tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_bb);
   builder_->CreateAtomicRMW(AtomicRMWInst::Xchg, rmw_ptr, rmw_val,
                                           AtomicOrdering::Monotonic,
                                           SyncScope::System);
-//  tgt_->add_memfence(module, *builder_);
   builder_->CreateBr(tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_done_bb);
-//  tgt_->add_memfence(module, *builder_);
-//  tgt_->add_barrier(module, *builder_);
+  tgt_->add_memfence(module, *builder_);
 }
 
 void generator::visit_atomic_add_inst(ir::atomic_add_inst*) {

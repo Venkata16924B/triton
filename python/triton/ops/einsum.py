@@ -19,7 +19,7 @@ class _einsum(triton.function):
     ## Triton-C code generation
     #############################
 
-    def unpack_cc(tile, axes):
+    def unpack_cc(tile, axes, prefix):
         ret = ''
         axes = list(map(str, axes))
         for i, d in enumerate(reversed(axes)):
@@ -27,8 +27,8 @@ class _einsum(triton.function):
                 break
             currs = ''.join(axes[: len(axes) - i])
             nexts = ''.join(axes[: len(axes) - (i + 1)])
-            ret += f'    int r{nexts}[{tile}] = r{currs} / dim_{d};\n'
-            ret += f'    int r{d}[{tile}] = r{currs} % dim_{d};\n'
+            ret += f'    int {prefix}{nexts}[{tile}] = r{currs} / dim_{d};\n'
+            ret += f'    int {prefix}{d}[{tile}] = r{currs} % dim_{d};\n'
         return ret
 
     def strides_cc(name, expr):
@@ -48,6 +48,7 @@ __global__ void {name}(
             , TYPE * B __noalias __readonly __aligned(16)
             , TYPE * C
             , int * locks
+            , float alpha
             , int matmul_m, int matmul_n, int matmul_k __multipleof(64)
             , int div_m
             """
@@ -92,23 +93,26 @@ __global__ void {name}(
 
     // create ranges
 """
-        for axes, tile, pid in zip([axes_m, axes_n, axes_b, axes_k],
-                                   ['TM', 'TN', 'TB', 'TK'],
-                                   ['pid_m', 'pid_n', 'pid_b', '']):
+        rk = 'r{}'.format(''.join(map(str,axes_k)))
+        src += f"    int {rk}[TK] = off_k + 0 ... TK;\n"
+
+        for axes, tile, pid in zip([axes_m, axes_n, axes_b],
+                                   ['TM', 'TN', 'TB'],
+                                   ['pid_m', 'pid_n', 'pid_b']):
             currs = ''.join(map(str,axes))
-            if axes == axes_k:
-                src += f"    int r{currs}[{tile}] = off_k + 0 ... {tile};\n"
-            else:
+            if axes:
                 src += f"    int r{currs}[{tile}] = {pid} * {tile} + 0 ... {tile};\n"
         
+
         if axes_m:
-            src += _einsum.unpack_cc('TM', axes_m)
+            src += _einsum.unpack_cc('TM', axes_m, 'r')
         if axes_n:
-            src += _einsum.unpack_cc('TN', axes_n)
+            src += _einsum.unpack_cc('TN', axes_n, 'r')
         if axes_b:
-            src += _einsum.unpack_cc('TB', axes_b)
+            src += _einsum.unpack_cc('TB', axes_b, 'r')
         if axes_k:
-            src += _einsum.unpack_cc('TK', axes_k)
+            src += _einsum.unpack_cc('TK', axes_k, 'r')
+
 
         src += """    
 
@@ -126,10 +130,10 @@ __global__ void {name}(
         src += ';'
 
         if not lut_mode_a == _einsum.LUT_MODE.SCALAR:
-            src += """
+            src += f"""
     // initialize pointers to A look-up table
-    int *padelta[TK]  = AD  + 0 ... TK;
-    int *padeltai[TK] = ADI + 0 ... TK;""".format(k = ''.join(map(str,axes_k)))
+    int *padelta[TK]  = AD  + {rk};
+    int *padeltai[TK] = ADI + {rk};"""
     
         src += """
 
@@ -148,23 +152,25 @@ __global__ void {name}(
 
 
         if not lut_mode_b == _einsum.LUT_MODE.SCALAR:
-            src += """
+            src += f"""
     // initialize pointers to B look-up table
-    int *pbdelta[TK]  = BD  + 0 ... TK;
-    int *pbdeltai[TK] = BDI + 0 ... TK;"""
+    int *pbdelta[TK]  = BD  + {rk};
+    int *pbdeltai[TK] = BDI + {rk};"""
 
-        src += """
+        #print(axes_k)
+        src += f"""
     
-    // accumulate
-    float acc[TM, TN, TB] = 0;"""
-        ksuffix = ''.join(map(str,axes_k))
-        src += """
-    bool checka[TM, TK, TB] = r{ksuffix}[newaxis, :, newaxis] < off_k + matmul_k;
-    bool checkb[TK, TN, TB] = r{ksuffix}[:, newaxis, newaxis] < off_k + matmul_k;
+    // prefetch
+    {rk} -= off_k;
+    bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < matmul_k;
+    bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < matmul_k;
     TYPE a[TM, TK, TB] = checka ? *pa : 0;
     TYPE b[TK, TN, TB] = checkb ? *pb : 0;
+
+    // accumulate
+    float acc[TM, TN, TB] = 0;
     for(int k = matmul_k; k > 0; k -= TK) {{
-        acc += a @ b;""".format(ksuffix = ksuffix)
+        acc += a @ b;"""
 
         if lut_mode_a == _einsum.LUT_MODE.SCALAR:
             src += """
@@ -186,12 +192,14 @@ __global__ void {name}(
         pbdelta += bdeltai;
         pbdeltai += bdeltai;"""
 
-        src += """
-        bool checka[TM, TK, TB] = k > TK;
-        bool checkb[TK, TN, TB] = k > TK;
+        src += f"""
+        bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < k - TK;
+        bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < k - TK;
         a = checka ? *pa : 0;
         b = checkb ? *pb : 0;
-    }"""
+    }}
+    acc = acc * alpha;
+    """
 
 
         src += """
@@ -210,11 +218,13 @@ __global__ void {name}(
         src += ';'
     
         src += """
-    // write-back
+    // bounds-checking
     bool checkm[TM] = r""" + ''.join(map(str,axes_m)) + """ < matmul_m;
     bool checkn[TN] = r""" + ''.join(map(str,axes_n)) + """ < matmul_n;
     bool checkc[TM, TN, TB] = checkm[:, newaxis, newaxis] && 
                               checkn[newaxis, :, newaxis];
+
+    // write back
     TYPE c[TM, TN, TB] = acc;
 #if TZ == 1
     *?(checkc)pc = c;
@@ -371,6 +381,8 @@ __global__ void {name}(
 
     @staticmethod
     def forward(ctx, einsum, a, b, bench):
+        dtype = a.dtype
+        TK = 16 if dtype == triton.fw.torch.float16 else 8
         # parse symbols
         expr_a, expr_bc = einsum.split(",")
         expr_b, expr_c  = expr_bc.split("->")
@@ -409,7 +421,6 @@ __global__ void {name}(
         dim_m = {d: dims[d] for d in axes_m}
         dim_n = {d: dims[d] for d in axes_n}
         # look-up tables
-        TK = 16
         delta_a, diff_a = _einsum.make_delta(axes_k, TK, shape_a, dims, sym_a)
         delta_b, diff_b = _einsum.make_delta(axes_k, TK, shape_b, dims, sym_b)
         # look-up mode
@@ -430,7 +441,6 @@ __global__ void {name}(
         kernel = _einsum.cache[name]
         locks = torch.zeros(2*1024*1024, dtype=torch.int32).cuda()
         # execute kernel
-        dtype = a.dtype
         c = triton.empty(shape_c, dtype=dtype)
         matmul_m = reduce(mul, dim_m.values(), 1)
         matmul_n = reduce(mul, dim_n.values(), 1)
@@ -439,8 +449,9 @@ __global__ void {name}(
         args  = []
         args += [a, b, c]
         args += [locks]
+        args += [1.]
         args += [matmul_m, matmul_n, matmul_k]
-        args += [_einsum.divto4(ceil(matmul_n / 128))]
+        args += [1]
         # dims
         args += [dim_m[d] for d in axes_m]
         args += [dim_n[d] for d in axes_n]
