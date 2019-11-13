@@ -60,12 +60,19 @@ NTHSE = [
          #(128, 1024, 8, 256, 256),
          #(128, 1024, 8, 256, 512)
         ]
-for N, T, H, S, E in NTHSE:
-    configs += [([N, T, H, S], [H, E, S], 'nths,hes->nhte')]
-for N, T, H, S, E in NTHSE:
-    configs += [([N, H, T, E], [N, T, H, S], 'nhte,nths->hes')]
-for N, T, H, S, E in NTHSE:
-    configs += [([N, H, T, E], [H, E, S], 'nhte,hes->nths')]
+#for N, T, H, S, E in NTHSE:
+#    configs += [([N, T, H, S], [H, E, S], 'nths,hes->nhte')]
+#for N, T, H, S, E in NTHSE:
+#    configs += [([N, H, T, E], [N, T, H, S], 'nhte,nths->hes')]
+#for N, T, H, S, E in NTHSE:
+#    configs += [([N, H, T, E], [H, E, S], 'nhte,hes->nths')]
+
+# Convolution
+NCHWKRS = [
+           (16, 16, 16, 16, 16, 3, 3)
+          ]
+for N, C, H, W, K, R, S in NCHWKRS:
+    configs += [([N, C, H, W], [K, C, R, S], 'nc(p+r)(q+s),kcrs->nkpq')]
 
 # Benchmark
 for a_shape, b_shape, expr in configs:
@@ -73,7 +80,10 @@ for a_shape, b_shape, expr in configs:
     b = np.random.randn(*b_shape).astype(np.float32)
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
-    rc = torch.einsum(expr, a, b)
+    if expr == 'nc(p+r)(q+s),kcrs->nkpq':
+        rc = torch.nn.functional.conv2d(a, b)
+    else:
+        rc = torch.einsum(expr, a, b)
     tc = triton.ops.einsum(expr, a, b, True)
     bench = triton.ctx_registry[tc].flops / triton.bench_registry[tc] * 1e-3
     diff = (tc - rc).abs().max() / rc.abs().max()
