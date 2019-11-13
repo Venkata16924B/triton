@@ -302,9 +302,7 @@ __global__ void {name}(
             delta += strides[i] * (symbols[i].subs(subs) - symbols[i])
         return delta
 
-    def make_delta(axes, step, shape, dims, symbols):
-        # symbolic pointer increments
-        delta = _einsum.symbolic_delta(symbols, axes)
+    def make_delta(axes, step, shape, dims, delta):
         # inner axes values
         inner = [dims[d] for d in axes]
         k = np.arange(np.prod(inner[1:]), dtype=np.int32)
@@ -326,7 +324,7 @@ __global__ void {name}(
     def extract_strides(shape):
         strides = np.cumprod(shape[::-1])[::-1]
         strides = np.concatenate((strides[1:], [1]))
-        return strides
+        return strides.tolist()
 
 
     def extract_symbols(expr):
@@ -344,34 +342,43 @@ __global__ void {name}(
                 i += 1
         return sym
   
-    def solve_shape(symbols, target, subs, shape):
+    def solve_shape(symbols, target, shape, subs):
         ret = set()
         for id, sym in enumerate(symbols):
             if target in sym.free_symbols:
-                res = sp.solve(sp.Eq(sym, shape[id]), target)[0]
-                res = res.subs(subs)
-                ret.add(int(res))
+                res = sp.solve(sp.Eq(sym.subs(subs), shape[id]), target)[0]
+                ret.add(res)
         return ret
 
-    def infer_shape(sym_c, sym_a, sym_b, expr_a, expr_b, shape_a, shape_b):
+    def symbolic_shape(sym_c, sym_a, sym_b, expr_a, expr_b, expr_c):
         shape_c = []
-        max_idx = dict()
-        for id, sa in enumerate(sym_a):
-            max_idx[sa] = shape_a[id] - 1
-        for id, sb in enumerate(sym_b):
-            max_idx[sb] = shape_b[id] - 1
+        shape_a = [sp.symbols(f'dim_{x}') for x in sym_a]
+        shape_b = [sp.symbols(f'dim_{x}') for x in sym_b]
         for sc in sym_c:
-            current = set()
-            current.update(_einsum.solve_shape(sym_a, sc, max_idx, shape_a))
-            current.update(_einsum.solve_shape(sym_b, sc, max_idx, shape_b))
-            if len(current) == 1:
-                shape_c.append(current.pop())
-            elif len(current) > 1:
-                raise ValueError(f"conflicting shape definition for {sc} ({current})")
+            solve = set()
+            subs = {f'{x}': sp.symbols(f'dim_{x}') - 1 \
+                    for x in sym_a + sym_b if x != sc}
+            solve.update(_einsum.solve_shape(sym_a, sc, shape_a, subs))
+            solve.update(_einsum.solve_shape(sym_b, sc, shape_b, subs))
+            if len(solve) == 1:
+                current = solve.pop()
+                shape_c.append(current)
+            elif len(solve) > 1:
+                raise ValueError(f"conflicting shape definition for {sc} ({solve})")
             else:
-                raise ValueError(f"einsum def for output: {i} ({expr_c})"\
+                raise ValueError(f"einsum def for output: {sc} ({expr_c})"\
                                  f", not present in either input def ({expr_a}, {expr_b})")
         return shape_c
+
+
+    def infer_shape(sym_shape, sym_a, sym_b, shape_a, shape_b):
+        shape_c = []
+        dims = dict()
+        for id, sa in enumerate(sym_a):
+            dims[f'dim_{sa}'] = shape_a[id]
+        for id, sb in enumerate(sym_b):
+            dims[f'dim_{sb}'] = shape_b[id]
+        return [int(sc.subs(dims)) for sc in sym_shape]
 
     @staticmethod
     def divto4(val):
@@ -390,21 +397,21 @@ __global__ void {name}(
         sym_a = _einsum.extract_symbols(expr_a)
         sym_b = _einsum.extract_symbols(expr_b)
         sym_c = _einsum.extract_symbols(expr_c)
+        # parse axes
+        axes_b, axes_m, axes_k = _einsum.parse_axes(sym_a, sym_b, sym_c)
+        _, axes_n, _ = _einsum.parse_axes(sym_b, sym_a, sym_c)
+        # symbolic pointer increments
+        delta_a = _einsum.symbolic_delta(sym_a, axes_k)
+        delta_b = _einsum.symbolic_delta(sym_b, axes_k)
         # input shapes
         shape_a = np.shape(a)
         shape_b = np.shape(b)
-        # extract output shape
-        shape_c = []
+        shape_c = _einsum.symbolic_shape(sym_c, sym_a, sym_b, expr_a, expr_b, expr_c)
+        shape_c = _einsum.infer_shape(shape_c, sym_a, sym_b, shape_a, shape_b)
+        # check dimensions
         dims_a  = dict(zip(sym_a, shape_a))
         dims_b  = dict(zip(sym_b, shape_b))
-        strides_a = dict(zip(sym_a, _einsum.extract_strides(shape_a)))
-        strides_b = dict(zip(sym_b, _einsum.extract_strides(shape_b)))
-        shape_c = _einsum.infer_shape(sym_c, sym_a, sym_b, expr_a, expr_b, shape_a, shape_b)
-        dims_c = dict(zip(sym_c, shape_c))
-        strides_c = dict(zip(sym_c, _einsum.extract_strides(shape_c)))
-        # extract axes
-        axes_b, axes_m, axes_k = _einsum.parse_axes(sym_a, sym_b, sym_c)
-        _, axes_n, _ = _einsum.parse_axes(sym_b, sym_a, sym_c)
+        dims_c  = dict(zip(sym_c, shape_c))
         for name, axes in zip(['batch', 'inner'], [axes_b, axes_k]):
             for d in axes:
                 dim_a = dims_a[d] if d in sym_a else None
@@ -417,13 +424,9 @@ __global__ void {name}(
         dims.update(dims_a)
         dims.update(dims_b)
         dims.update(dims_c)
-        dim_b = {d: dims[d] for d in axes_b}
-        dim_k = {d: dims[d] for d in axes_k}
-        dim_m = {d: dims[d] for d in axes_m}
-        dim_n = {d: dims[d] for d in axes_n}
         # look-up tables
-        delta_a, diff_a = _einsum.make_delta(axes_k, TK, shape_a, dims, sym_a)
-        delta_b, diff_b = _einsum.make_delta(axes_k, TK, shape_b, dims, sym_b)
+        delta_a, diff_a = _einsum.make_delta(axes_k, TK, shape_a, dims, delta_a)
+        delta_b, diff_b = _einsum.make_delta(axes_k, TK, shape_b, dims, delta_b)
         # look-up mode
         lut_mode_a = _einsum.lut_mode(delta_a)
         lut_mode_b = _einsum.lut_mode(delta_b)  
@@ -442,6 +445,10 @@ __global__ void {name}(
         kernel = _einsum.cache[name]
         locks = torch.zeros(2*1024*1024, dtype=torch.int32).cuda()
         # execute kernel
+        dim_b = {d: dims[d] for d in axes_b}
+        dim_k = {d: dims[d] for d in axes_k}
+        dim_m = {d: dims[d] for d in axes_m}
+        dim_n = {d: dims[d] for d in axes_n}
         c = triton.empty(shape_c, dtype=dtype)
         matmul_m = reduce(mul, dim_m.values(), 1)
         matmul_n = reduce(mul, dim_n.values(), 1)
@@ -459,9 +466,9 @@ __global__ void {name}(
         args += [dim_k[d] for d in axes_k]
         args += [dim_b[d] for d in axes_b]
         # strides
-        args += [strides_a[d] for d in sym_a[:-1]]
-        args += [strides_b[d] for d in sym_b[:-1]]
-        args += [strides_c[d] for d in sym_c[:-1]]
+        args += _einsum.extract_strides(shape_a)[:-1]
+        args += _einsum.extract_strides(shape_b)[:-1]
+        args += _einsum.extract_strides(shape_c)[:-1]
         # look-up table for a
         if lut_mode_a == _einsum.LUT_MODE.SCALAR:
             args += [delta_a[0]]
