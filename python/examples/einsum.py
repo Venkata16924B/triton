@@ -72,7 +72,14 @@ NCHWKRS = [
            (16, 16, 16, 16, 16, 3, 3)
           ]
 for N, C, H, W, K, R, S in NCHWKRS:
-    configs += [([N, C, H, W], [K, C, R, S], 'nc(p+r)(q+s),kcrs->nkpq')]
+    configs += [([N, C, H, W], [K, C, R, S], 'nc(p+r-1)(q+s-1),kcrs->nkpq')]
+
+def conv_shape(a_shape, b_shape, pad_h, pad_w):
+    N, C, H, W = a_shape
+    K, C, R, S = b_shape
+    P = H - R + 2*pad_h + 1
+    Q = W - S + 2*pad_w + 1
+    return [N, K, P, Q]
 
 # Benchmark
 for a_shape, b_shape, expr in configs:
@@ -80,11 +87,17 @@ for a_shape, b_shape, expr in configs:
     b = np.random.randn(*b_shape).astype(np.float32)
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
-    if expr == 'nc(p+r)(q+s),kcrs->nkpq':
-        rc = torch.nn.functional.conv2d(a, b)
+    if '(' in expr:
+        rc = torch.nn.functional.conv2d(a, b, padding=1)
+        print(rc.shape)
     else:
         rc = torch.einsum(expr, a, b)
-    tc = triton.ops.einsum(expr, a, b, True)
+    pad_h = 1
+    pad_w = 1
+    shape_c = conv_shape(a_shape, b_shape, pad_h, pad_w)
+    tc = triton.ops.einsum(expr, a, b, shape_c, True)
     bench = triton.ctx_registry[tc].flops / triton.bench_registry[tc] * 1e-3
+    print(tc[0,0,0,0])
+    print(rc[0,0,0,0])
     diff = (tc - rc).abs().max() / rc.abs().max()
     print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f};          {diff:4.2f}')
