@@ -148,9 +148,9 @@ public:
   // Factory methods
   static binary_operator *create(binary_op_t op, value *lhs, value *rhs,
                                  const std::string &name = "", instruction *next = nullptr);
-  static binary_operator *create_fneg(value *arg, const std::string &name = "", instruction *next = nullptr);
-  static binary_operator *create_neg(value *arg, const std::string &name = "", instruction *next = nullptr);
-  static binary_operator *create_not(value *arg, const std::string &name = "", instruction *next = nullptr);
+//  static binary_operator *create_fneg(value *arg, const std::string &name = "", instruction *next = nullptr);
+//  static binary_operator *create_neg(value *arg, const std::string &name = "", instruction *next = nullptr);
+//  static binary_operator *create_not(value *arg, const std::string &name = "", instruction *next = nullptr);
 
   _TRITON_DEFINE_CLONE(binary_operator)
   _TRITON_DEFINE_ACCEPT(binary_operator)

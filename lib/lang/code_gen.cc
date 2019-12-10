@@ -76,7 +76,7 @@ void Generator::VisitBinaryOp(BinaryOp* binary) {
         return set_ret(bld_->create_add(lhs, rhs));
     case '-':
       if(binary->lhs_->Type()->ToPointer())
-        return set_ret(bld_->create_gep(lhs, {bld_->create_neg(rhs)}));
+        return set_ret(bld_->create_gep(lhs, {GenUnaryMinus(rhs)}));
       else if(flt)
         return set_ret(bld_->create_fsub(lhs, rhs));
       else
@@ -166,6 +166,16 @@ ir::reduce_inst::op_t reduce_op(int tag, bool is_float) {
   should_not_happen();
   return reduce_inst::op_t();
 }
+
+ir::value* Generator::GenUnaryMinus(ir::value* arg) {
+  ir::type *ty = arg->get_type();
+  ir::type *sca_ty = ty->get_scalar_ty();
+  ir::value *_0 = ir::constant_fp::get_zero_value_for_negation(sca_ty);
+  if(ty->is_tile_ty())
+    _0 = bld_->create_splat(_0, ty->get_tile_shapes());
+  return bld_->create_sub(_0, arg);
+}
+
 void Generator::VisitUnaryOp(UnaryOp* unary) {
   // recursion
   Visit(unary->operand_);
@@ -174,17 +184,17 @@ void Generator::VisitUnaryOp(UnaryOp* unary) {
   ir::type *arg_scal_ty = arg_ty->get_scalar_ty();
   // return
   switch  (unary->op_) {
-    case Token::PREFIX_INC: return error_not_implemented();
-    case Token::PREFIX_DEC: return error_not_implemented();
+    case Token::PREFIX_INC:  return error_not_implemented();
+    case Token::PREFIX_DEC:  return error_not_implemented();
     case Token::POSTFIX_INC: return error_not_implemented();
     case Token::POSTFIX_DEC: return error_not_implemented();
-    case Token::ADDR: return error_not_implemented();
-    case Token::DEREF: return set_ret(bld_->create_load(arg));
-    case Token::PLUS: return error_not_implemented();
-    case Token::MINUS: return error_not_implemented();
-    case '~': return set_ret(bld_->create_neg(arg));
-    case '!': return set_ret(bld_->create_not(arg));
-    case Token::CAST: return set_ret(GenCastOp(arg, GenIRType(unary->Type(), *ctx_)));
+    case Token::ADDR:        return error_not_implemented();
+    case Token::DEREF:       return set_ret(bld_->create_load(arg));
+    case Token::PLUS:        return error_not_implemented();
+    case Token::MINUS:       return set_ret(GenUnaryMinus(arg));
+    case '~':                return error_not_implemented();
+    case '!':                return error_not_implemented();
+    case Token::CAST:        return set_ret(GenCastOp(arg, GenIRType(unary->Type(), *ctx_)));
     case Token::REDUCE: {
       int ax, tag;
       UnaryOp::decodeRed(unary->info_, ax, tag);

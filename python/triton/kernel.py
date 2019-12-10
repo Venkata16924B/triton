@@ -264,7 +264,7 @@ class kernel:
         for y in ret: 
           bench_registry[y] = triton.utils.id_dict.lazy_entry(bench_id)
     elif fw.has_torch():
-      args = [x.contiguous() if isinstance(x, fw.torch.Tensor) else x for x in args[:-1]]
+      args = [x if isinstance(x, fw.torch.Tensor) else x for x in args[:-1]]
       ret = self.fw_op(op_id, bench, bench_id, *args)
       if bench > 0:
         bench_registry[ret] = libtriton.retrieve_scalar(bench_id)

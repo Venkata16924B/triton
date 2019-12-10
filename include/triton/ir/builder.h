@@ -115,10 +115,10 @@ public:
   value *create_and(value *lhs, value *rhs, const std::string &name = "");
   value *create_xor(value *lhs, value *rhs, const std::string &name = "");
   value *create_or(value *lhs, value *rhs, const std::string &name = "");
-  // Side effects
-  value *create_fneg(value *arg, const std::string &name = "");
-  value *create_neg(value *arg, const std::string &name = "");
-  value *create_not(value *arg, const std::string &name = "");
+  // Unary
+//  value *create_fneg(value *arg, const std::string &name = "");
+//  value *create_neg(value *arg, const std::string &name = "");
+//  value *create_not(value *arg, const std::string &name = "");
   // Input/Output
   value *create_load(value *arg, const std::string &name = "");
   value *create_store(value *ptr, value *val, const std::string &name = "");
