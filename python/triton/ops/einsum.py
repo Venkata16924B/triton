@@ -41,8 +41,6 @@ def print_triton(expr, axes_0, axes_1, axes_2):
 class _einsum(triton.function):
 
 
-    cache = dict()
-
     #############################
     ## Triton-C code generation
     #############################
@@ -259,7 +257,7 @@ __global__ void {name}(
         return triton.kernel(src, ['C'])
 
     ############################
-    ## Look-up Table Helper
+    ## Look-up Table
     ############################
 
     class LUT_MODE(IntEnum):
@@ -270,35 +268,9 @@ __global__ void {name}(
     def lut_mode(delta):
         if np.min(delta) == np.max(delta):
             return _einsum.LUT_MODE.SCALAR
-        if delta.size < 2048:
+        if delta.size < 4096:
             return _einsum.LUT_MODE.CONSTANT
         return _einsum.LUT_MODE.DRAM
-
-
-    ############################
-    ## Einsum parsing
-    ############################
-
-    def parse_axes(expr_a, expr_b, expr_c, arrays):
-        is_index = lambda x: type(x) == sp.indexed.Indexed or str(x) in arrays
-        sym_a = [x for s in expr_a for x in s.free_symbols if not is_index(x)]
-        sym_b = [x for s in expr_b for x in s.free_symbols if not is_index(x)]
-        sym_c = [x for s in expr_c for x in s.free_symbols]
-        batch = [d for d in sym_a if d in sym_b and d in sym_c]
-        outer = [d for d in sym_a if d not in sym_b and d in sym_c]
-        inner = [d for d in sym_a if d in sym_b and d not in sym_c]
-        illegal = [d for d in sym_a if d not in sym_b and d not in sym_c]
-        if illegal:
-            raise ValueError(f"einsum labels {illegal} ({expr_a}) "\
-                             f"not present in {expr_b} or {expr_c}")
-        return list(set(batch)), list(set(outer)), list(set(inner))
-
-    def unpack_offset(k, axes, dims):
-        ret = dict()
-        for d in reversed(axes):
-            ret[d] = k % dims[d]
-            k = k // dims[d]
-        return ret
 
     def symbolic_delta(symbols, axes):
         rank = len(symbols)
@@ -308,7 +280,13 @@ __global__ void {name}(
         for i in range(rank):
             delta += strides[i] * (symbols[i].subs(nexts) - symbols[i])
         return delta
-    
+
+    def unpack_offset(k, axes, dims):
+        ret = dict()
+        for d in reversed(axes):
+            ret[d] = k % dims[d]
+            k = k // dims[d]
+        return ret
     
     def make_delta(axes, step, stride, dims, symbols, arrays):
         # symbolic pointer increments
@@ -329,7 +307,26 @@ __global__ void {name}(
         args += [nextoff[sk] for sk in axes]
         args += [x for _, x in arrays]
         delta = fn(*args)
-        return delta
+        return delta, _einsum.lut_mode(delta)
+
+    ############################
+    ## Einsum parsing
+    ############################
+
+    def parse_axes(expr_a, expr_b, expr_c, subscripted):
+        is_index = lambda x: type(x) == sp.indexed.Indexed or str(x) in subscripted
+        sym_a = [x for s in expr_a for x in s.free_symbols if not is_index(x)]
+        sym_b = [x for s in expr_b for x in s.free_symbols if not is_index(x)]
+        sym_c = [x for s in expr_c for x in s.free_symbols]
+        batch = [d for d in sym_a if d in sym_b and d in sym_c]
+        outer = [d for d in sym_a if d not in sym_b and d in sym_c]
+        inner = [d for d in sym_a if d in sym_b and d not in sym_c]
+        illegal = [d for d in sym_a if d not in sym_b and d not in sym_c]
+        if illegal:
+            raise ValueError(f"einsum labels {illegal} ({expr_a}) "\
+                             f"not present in {expr_b} or {expr_c}")
+        return list(set(batch)), list(set(outer)), list(set(inner))
+
 
     def replace_subscript(expr, arrays):
         # replace array indexing by Indexed()
@@ -357,12 +354,9 @@ __global__ void {name}(
                 i += 1
         return sym
   
-    @staticmethod
-    def divto4(val):
-        for N in [4, 3, 5, 2, 7]:
-            if val % N == 0:
-                return N
-        return 1
+    ############################
+    ## Preprocessing
+    ############################
 
     @staticmethod
     def pad(tensor, pad):
@@ -375,125 +369,155 @@ __global__ void {name}(
         return tensor
 
 
+    ############################
+    ## Compilation
+    ############################
+
+    class instance:
+
+        locks = None
+        kernel_cache = dict()
+
+        def __init__(self, einsum, dtype, stride_a, stride_b, stride_c, shape_a, shape_b, shape_c, arrays):
+            # parse symbols
+            expr_a, expr_bc = einsum.split(",")
+            expr_b, expr_c  = expr_bc.split("->")
+            subscripted = []
+            sym_a = _einsum.parse_expr(expr_a, subscripted)
+            sym_b = _einsum.parse_expr(expr_b, subscripted)
+            sym_c = _einsum.parse_expr(expr_c, subscripted)
+            # parse axes
+            axes_b, axes_m, axes_k = _einsum.parse_axes(sym_a, sym_b, sym_c, subscripted)
+            _, axes_n, _           = _einsum.parse_axes(sym_b, sym_a, sym_c, subscripted)
+            axes = axes_b + axes_m + axes_n + axes_k
+            # check dimensions
+            dims_a  = dict(zip(sym_a, shape_a))
+            dims_b  = dict(zip(sym_b, shape_b))
+            dims_c  = dict(zip(sym_c, shape_c))
+            for axes in [axes_b, axes_k]:
+                for d in axes:
+                    dim_a = dims_a[d] if d in sym_a else None
+                    dim_b = dims_b[d] if d in sym_b else None
+                    if dim_a and dim_b and dim_a != dim_b:
+                        raise ValueError(f'incompatible dimension {d}'
+                                        f' (a: {dim_a}; b: {dim_b})')
+            dims = dict()
+            dims.update(dims_a)
+            dims.update(dims_b)
+            dims.update(dims_c)
+            # look-up tables
+            TK = 16 if dtype == triton.fw.torch.float16 else 8
+            arrays = [(x, arrays[x]) for x in subscripted]
+            delta_a, lut_mode_a = _einsum.make_delta(axes_k, TK, stride_a, dims, sym_a, arrays)
+            delta_b, lut_mode_b = _einsum.make_delta(axes_k, TK, stride_b, dims, sym_b, arrays)
+            # hash for recompilation
+            stride_a_multiple = max([x for x in [1, 2, 4, 8] if shape_a[-1] % x == 0])
+            stride_b_multiple = max([x for x in [1, 2, 4, 8] if shape_b[-1] % x == 0])
+            stride_c_multiple = max([x for x in [1, 2, 4, 8] if shape_c[-1] % x == 0])
+            name = f'{expr_a}_{expr_b}_{expr_c}_{lut_mode_a}_{lut_mode_b}'\
+                f'_{stride_a_multiple}_{stride_b_multiple}_{stride_c_multiple}'
+            # recompile if necessary
+            cache = _einsum.instance.kernel_cache
+            if name not in cache:
+                cachesize = len(cache)
+                cache[name] = _einsum.make_kernel(f'__einsum{cachesize}', 
+                                                        sym_a, sym_b, sym_c, 
+                                                        axes_m, axes_n, axes_k, axes_b, 
+                                                        stride_a_multiple, stride_b_multiple, stride_c_multiple,
+                                                        lut_mode_a, lut_mode_b, subscripted)
+            self.kernel = cache[name]
+            # Initialize locks
+            if _einsum.instance.locks is None:
+                _einsum.instance.locks = torch.zeros(2*1024*1024, dtype=torch.int32).cuda()
+            # Kernel arguments
+            dim_m = [dims[d] for d in axes_m]
+            dim_n = [dims[d] for d in axes_n]
+            dim_k = [dims[d] for d in axes_k]
+            dim_b = [dims[d] for d in axes_b]
+            M = reduce(mul, dim_m, 1)
+            N = reduce(mul, dim_n, 1)
+            K = reduce(mul, dim_k, 1)
+            B = reduce(mul, dim_b, 1)
+            stride_a = list(stride_a[:-1])
+            stride_b = list(stride_b[:-1])
+            stride_c = list(stride_c[:-1])
+            delta_a = delta_a[0] if lut_mode_a == _einsum.LUT_MODE.SCALAR else torch.from_numpy(delta_a).cuda()
+            delta_b = delta_b[0] if lut_mode_b == _einsum.LUT_MODE.SCALAR else torch.from_numpy(delta_b).cuda()
+            arrays = [torch.from_numpy(x) for _, x in arrays]
+            alpha = 1.
+            div_m = 1
+            self.args = [None, None, None,
+                         _einsum.instance.locks, 
+                         alpha, M, N, K, div_m,
+                         None, None, None] +\
+                         dim_m + dim_n +  dim_k + dim_b +\
+                         stride_a + stride_b + stride_c +\
+                         [delta_a, delta_b] +\
+                         arrays
+            self.args += [lambda opt: [triton.cdiv(M, opt.d('TM')) * 
+                                       triton.cdiv(N, opt.d('TN')),
+                                       triton.cdiv(B, opt.d('TB')),
+                                       opt.d('TZ')]]
+            # position of dynamic arguments
+            self.pos_a = 0
+            self.pos_b = 1
+            self.pos_c = 2
+            self.pos_offa = 9
+            self.pos_offb = 10
+            self.pos_offc = 11
+            # pre-processor macros
+            TM = [x for x in [16, 32, 64, 128] if x <= M]
+            TN = [x for x in [16, 32, 64, 128] if x <= N]
+            TB = [x for x in [1, 2, 4] if x <= B]
+            MAX_GZ = K // 2048
+            MIN_GM = M // max(TM)
+            MIN_GN = N // max(TN)
+            MIN_GB = B // max(TB)
+            TZ = [x for x in [1, 2, 4, 8, 16, 32] \
+                    if x < MAX_GZ and x*MIN_GM*MIN_GN*MIN_GB < 256]
+            TZ = [1] if not TZ else [TZ[-1], TZ[-1]*2]
+            self.macros = {  'TM': TM, 'TN': TN, 'TB': TB, 'TK': TK, 'TZ': TZ, 'TYPE': dtype }
+            self.dtype = dtype
+            self.flops = 2 * B * M * N * K
+            self.sym_a = sym_a
+            self.sym_b = sym_b
+            self.sym_c = sym_c
+                    
+        def run(self, a, b, c, bench):
+            self.args[self.pos_a] = a
+            self.args[self.pos_b] = b
+            self.args[self.pos_c] = c
+            self.args[self.pos_offa] = a.storage_offset()
+            self.args[self.pos_offb] = b.storage_offset()
+            self.args[self.pos_offc] = c.storage_offset()
+            self.kernel(*self.args, bench=bench, **self.macros)
+
+
+
+
+    ############################
+    ## Forward / Backward
+    ############################
+
+    instance_cache = dict()
+
     @staticmethod
-    def forward(ctx, einsum, a, b, shape_c, bench, values):
-        # tile sizes
+    def forward(ctx, einsum, a, b, shape_c, bench, arrays):
+        # allocate output
         dtype = a.dtype
-        TK = 16 if dtype == triton.fw.torch.float16 else 8
-        # parse symbols
-        expr_a, expr_bc = einsum.split(",")
-        expr_b, expr_c  = expr_bc.split("->")
-        subscripted = []
-        sym_a = _einsum.parse_expr(expr_a, subscripted)
-        sym_b = _einsum.parse_expr(expr_b, subscripted)
-        sym_c = _einsum.parse_expr(expr_c, subscripted)
-        # parse axes
-        axes_b, axes_m, axes_k = _einsum.parse_axes(sym_a, sym_b, sym_c, subscripted)
-        _, axes_n, _           = _einsum.parse_axes(sym_b, sym_a, sym_c, subscripted)
-        axes = axes_b + axes_m + axes_n + axes_k
-        # shapes
-        shape_a = np.shape(a)
-        shape_b = np.shape(b)
-        # check batch and inner dimensions
-        dims_a  = dict(zip(sym_a, shape_a))
-        dims_b  = dict(zip(sym_b, shape_b))
-        dims_c  = dict(zip(sym_c, shape_c))
-        for axes in [axes_b, axes_k]:
-            for d in axes:
-                dim_a = dims_a[d] if d in sym_a else None
-                dim_b = dims_b[d] if d in sym_b else None
-                if dim_a and dim_b and dim_a != dim_b:
-                    raise ValueError(f'incompatible dimension {d}'
-                                     f' (a: {dim_a}; b: {dim_b})')
-        # extract outer dimensions
-        dims = dict()
-        dims.update(dims_a)
-        dims.update(dims_b)
-        dims.update(dims_c)
-        # look-up tables
-        arrays = [(x, values[x]) for x in subscripted]
-        delta_a = _einsum.make_delta(axes_k, TK, a.stride(), dims, sym_a, arrays)
-        delta_b = _einsum.make_delta(axes_k, TK, b.stride(), dims, sym_b, arrays)
-        # look-up mode
-        lut_mode_a = _einsum.lut_mode(delta_a)
-        lut_mode_b = _einsum.lut_mode(delta_b)  
-        # make kernel
-        stride_a_multiple = max([x for x in [1, 2, 4, 8] if shape_a[-1] % x == 0])
-        stride_b_multiple = max([x for x in [1, 2, 4, 8] if shape_b[-1] % x == 0])
-        stride_c_multiple = max([x for x in [1, 2, 4, 8] if shape_c[-1] % x == 0])
-        name = f'{expr_a}_{expr_b}_{expr_c}_{lut_mode_a}_{lut_mode_b}'\
-               f'_{stride_a_multiple}_{stride_b_multiple}_{stride_c_multiple}'
-        if name not in _einsum.cache:
-            cachesize = len(_einsum.cache)
-            _einsum.cache[name] = _einsum.make_kernel(f'__einsum{cachesize}', 
-                                                     sym_a, sym_b, sym_c, 
-                                                     axes_m, axes_n, axes_k, axes_b, 
-                                                     stride_a_multiple, stride_b_multiple, stride_c_multiple,
-                                                     lut_mode_a, lut_mode_b, subscripted)
-        kernel = _einsum.cache[name]
-        # allocate buffers
-        locks = torch.zeros(2*1024*1024, dtype=torch.int32).cuda()
         c = triton.empty(shape_c, dtype=dtype)
-        # execute kernel
-        matmul_m = reduce(mul, [dims[d] for d in axes_m], 1)
-        matmul_n = reduce(mul, [dims[d] for d in axes_n], 1)
-        matmul_k = reduce(mul, [dims[d] for d in axes_k], 1)
-        matmul_b = reduce(mul, [dims[d] for d in axes_b], 1)
-        alpha = 1.
-        div_m = 1
-        args  = []
-        args += [a, b, c, 
-                 locks, 
-                 alpha, 
-                 matmul_m, matmul_n, matmul_k, 
-                 div_m,
-                 a.storage_offset(), b.storage_offset(), c.storage_offset()]
-        args += [dims[d] for d in axes_m]
-        args += [dims[d] for d in axes_n]
-        args += [dims[d] for d in axes_k]
-        args += [dims[d] for d in axes_b]
-        args += list(a.stride())[:-1]
-        args += list(b.stride())[:-1]
-        args += list(c.stride())[:-1]
-        # look-up table for a
-        if lut_mode_a == _einsum.LUT_MODE.SCALAR:
-            args += [delta_a[0]]
-        else:
-            args += [torch.from_numpy(delta_a).cuda()]
-        # look-up table for b
-        if lut_mode_b == _einsum.LUT_MODE.SCALAR:
-            args += [delta_b[0]]
-        else:
-            args += [torch.from_numpy(delta_b).cuda()]
-        # external arrays
-        for x in subscripted:
-            args += [torch.from_numpy(values[x]).cuda()]
-        # tile sizes
-        TM = [x for x in [16, 32, 64, 128] if x <= matmul_m]
-        TN = [x for x in [16, 32, 64, 128] if x <= matmul_n]
-        # batch
-        TB = [x for x in [1, 2, 4] if x <= matmul_b]
-        # reduction-splitting
-        MAX_GZ = matmul_k // 2048
-        MIN_GM = matmul_m // max(TM)
-        MIN_GN = matmul_n // max(TN)
-        MIN_GB = matmul_b // max(TB)
-        TZ = [x for x in [1, 2, 4, 8, 16, 32] \
-                if x < MAX_GZ and x*MIN_GM*MIN_GN*MIN_GB < 256]
-        TZ = [1] if not TZ else [TZ[-1], TZ[-1]*2]
-        # launch
-        args += [lambda opt: [triton.cdiv(matmul_m, opt.d('TM')) * 
-                              triton.cdiv(matmul_n, opt.d('TN')),
-                              triton.cdiv(matmul_b, opt.d('TB')),
-                              opt.d('TZ')]]
-        kernel(*args, bench=bench, TM=TM, TN=TN, TK=TK, TZ=TZ, TYPE=dtype, TB=TB)
+        # compile einsum instance
+        instance = _einsum.instance(einsum, dtype, 
+                                    a.stride(), b.stride(), c.stride(),
+                                    a.shape, b.shape, c.shape, arrays)
+        instance.run(a, b, c, bench)
         # save information in context
-        ctx.flops = 2. * matmul_b * matmul_m * matmul_n * matmul_k
+        ctx.flops = instance.flops
+        ctx.sym_a = instance.sym_a
+        ctx.sym_b = instance.sym_b
+        ctx.sym_c = instance.sym_c
         ctx.bench = bench
         ctx.save_for_backward(a, b)
-        ctx.sym_a = sym_a
-        ctx.sym_b = sym_b
-        ctx.sym_c = sym_c
         return c
 
     @staticmethod
