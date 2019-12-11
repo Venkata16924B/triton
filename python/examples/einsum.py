@@ -94,7 +94,7 @@ for a_shape, b_shape, c_shape, torch_fn, expr in configs:
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
     # triton output
-    tc = triton.ops.einsum(expr, a, b, c_shape, True, dict())
+    tc = triton.ops.einsum(expr, a, b, c_shape, dict(), bench = True)
     # reference output
     if torch_fn:
         rc = torch_fn(a, b)

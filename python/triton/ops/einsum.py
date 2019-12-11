@@ -12,38 +12,40 @@ from collections import namedtuple
 import re
 from sympy.printing.ccode import C89CodePrinter
 
-class TritonCodePrinter(C89CodePrinter):
-    
-    def __init__(self, axes_0, axes_1, axes_2):
-        super(TritonCodePrinter, self).__init__()
-        self.axes_0 = axes_0
-        self.axes_1 = axes_1
-        self.axes_2 = axes_2
-
-    def _print_Symbol(self, expr):
-        name = super(C89CodePrinter, self)._print_Symbol(expr)
-        if expr in self.axes_0:
-            return f'r{name}[:, newaxis, newaxis]'
-        if expr in self.axes_1:
-            return f'r{name}[newaxis, :, newaxis]'
-        if expr in self.axes_2:
-            return f'r{name}[newaxis, newaxis, :]'
-        return name
-
-    def _print_Indexed(self, expr):
-        assert len(expr.indices) == 1
-        return "*(%s + %s)" % (self._print(expr.base.label),
-                               self._print(expr.indices[0]))
-        
-def print_triton(expr, axes_0, axes_1, axes_2):
-    return TritonCodePrinter(axes_0, axes_1, axes_2).doprint(expr)
-
+       
 class _einsum(triton.function):
 
 
     #############################
     ## Triton-C code generation
     #############################
+    def print_cc(expr, axes_0, axes_1, axes_2):
+
+        class TritonCodePrinter(C89CodePrinter):
+            
+            def __init__(self, axes_0, axes_1, axes_2):
+                super(TritonCodePrinter, self).__init__()
+                self.axes_0 = axes_0
+                self.axes_1 = axes_1
+                self.axes_2 = axes_2
+
+            def _print_Symbol(self, expr):
+                name = super(C89CodePrinter, self)._print_Symbol(expr)
+                if expr in self.axes_0:
+                    return f'r{name}[:, newaxis, newaxis]'
+                if expr in self.axes_1:
+                    return f'r{name}[newaxis, :, newaxis]'
+                if expr in self.axes_2:
+                    return f'r{name}[newaxis, newaxis, :]'
+                return name
+
+            def _print_Indexed(self, expr):
+                assert len(expr.indices) == 1
+                return "*(%s + %s)" % (self._print(expr.base.label),
+                                    self._print(expr.indices[0]))
+        
+        return TritonCodePrinter(axes_0, axes_1, axes_2).doprint(expr)
+
 
     def unpack_cc(tile, axes, prefix):
         ret = ''
@@ -149,7 +151,7 @@ __global__ void {name}(
     // initialize pointers to A
     TYPE *pa[TM, TK, TB] = A + off_a"""
         for i, sym in enumerate(expr_a):
-            ccode = print_triton(sym, axes_m, axes_k, axes_b)
+            ccode = _einsum.print_cc(sym, axes_m, axes_k, axes_b)
             stride = f'stride_a_{i}' if i < len(expr_a) - 1 else '1'
             src += f" + ({ccode}) * {stride}\n                            "
         src += ';'
@@ -164,7 +166,7 @@ __global__ void {name}(
     // initialize pointers to B
     TYPE *pb[TK, TN, TB] = B + off_b"""
         for i, sym in enumerate(expr_b):
-            ccode = print_triton(sym, axes_k, axes_n, axes_b)
+            ccode = _einsum.print_cc(sym, axes_k, axes_n, axes_b)
             stride = f'stride_b_{i}' if i < len(expr_b) - 1 else '1'
             src += f" + ({ccode}) * {stride}\n                            "
         src += ';'
@@ -222,7 +224,7 @@ __global__ void {name}(
     // initialize pointers to C
     TYPE *pc[TM, TN, TB] = C + off_c"""
         for i, sym in enumerate(expr_c):
-            ccode = print_triton(sym, axes_m, axes_n, axes_b)
+            ccode = _einsum.print_cc(sym, axes_m, axes_n, axes_b)
             stride = f'stride_c_{i}' if i < len(expr_c) - 1 else '1'
             src += f" + ({ccode}) * {stride}\n                            "
         src += ';'
@@ -496,13 +498,14 @@ __global__ void {name}(
 
 
     ############################
-    ## Forward / Backward
+    ## Forward
     ############################
 
     instance_cache = dict()
 
     @staticmethod
-    def forward(ctx, einsum, a, b, shape_c, bench, arrays):
+    def forward(ctx, einsum, a, b, shape_c, arrays, **kwargs):
+        bench = kwargs['bench'] if 'bench' in kwargs else False
         # allocate output
         dtype = a.dtype
         c = triton.empty(shape_c, dtype=dtype)
@@ -519,6 +522,10 @@ __global__ void {name}(
         ctx.bench = bench
         ctx.save_for_backward(a, b)
         return c
+
+    ############################
+    ## Backward
+    ############################
 
     @staticmethod
     def sym_invert(sym_c, sym_x, prefix, renamed, inverse):
