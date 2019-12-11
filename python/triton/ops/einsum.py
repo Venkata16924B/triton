@@ -445,7 +445,7 @@ __global__ void {name}(
             stride_c = list(stride_c[:-1])
             delta_a = delta_a[0] if lut_mode_a == _einsum.LUT_MODE.SCALAR else torch.from_numpy(delta_a).cuda()
             delta_b = delta_b[0] if lut_mode_b == _einsum.LUT_MODE.SCALAR else torch.from_numpy(delta_b).cuda()
-            arrays = [torch.from_numpy(x) for _, x in arrays]
+            arrays = [torch.from_numpy(x).cuda() for _, x in arrays]
             alpha = 1.
             div_m = 1
             self.args = [None, None, None,
@@ -504,8 +504,9 @@ __global__ void {name}(
     instance_cache = dict()
 
     @staticmethod
-    def forward(ctx, einsum, a, b, shape_c, arrays, **kwargs):
+    def forward(ctx, einsum, a, b, shape_c, **kwargs):
         bench = kwargs['bench'] if 'bench' in kwargs else False
+        arrays = kwargs['arrays'] if 'arrays' in kwargs else dict()
         # allocate output
         dtype = a.dtype
         c = triton.empty(shape_c, dtype=dtype)

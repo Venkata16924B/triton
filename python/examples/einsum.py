@@ -1,6 +1,7 @@
 import triton
 import torch
 import numpy as np
+import utils
 
 configs = []
 
@@ -71,30 +72,41 @@ NTHSE = [
 NCHWKRS = [
            (16, 16, 16, 16, 16, 3, 3)
           ]
-for N, C, H, W, K, R, S in NCHWKRS:
-    configs += [([N, C, H, W], 
-                 [K, C, R, S], 
-                 [N, K, H - R + 1, W - S + 1], 
-                 torch.nn.functional.conv2d, 'nc(h+r)(w+s),kcrs->nkhw')]
+#for N, C, H, W, K, R, S in NCHWKRS:
+#    configs += [([N, C, H, W], 
+#                 [K, C, R, S], 
+#                 [N, K, H - R + 1, W - S + 1], 
+#                 torch.nn.functional.conv2d, 
+#                 'nc(h+r)(w+s),kcrs->nkhw',
+#                 dict())]
 
 # Shift convolution
-#for N, C, H, W, K, R, S in NCHWKRS:
-#    shift_h = np.random.randint(3, size=C)
-#    shift_w = np.random.randint(3, size=C)
-#    configs += [([N, C, H, W], 
-#                 [K, C], 
-#                 [N, K, H, W], 
-#                 torch.nn.functional.conv2d, 'nc(h+sh[c])(w+sw[c]),kc->nkhw')]
+for N, C, H, W, K, R, S in NCHWKRS:
+    shift_h = np.random.randint(3, size=C, dtype=np.int32) - 1
+    shift_w = np.random.randint(3, size=C, dtype=np.int32) - 1
+    shift_torch =  np.column_stack((shift_h*-1, shift_w*-1))
+    shift_torch = torch.from_numpy(shift_torch).cuda()
+    def shift_conv(a, b):
+        a = utils.shift.apply(a, shift_torch)
+        b = b.reshape(K, C, 1, 1)
+        return torch.nn.functional.conv2d(a, b)
+    configs += [([N, C, H, W], 
+                 [K, C], 
+                 [N, K, H, W], 
+                 shift_conv, 
+                 'nc(h+sh[c])(w+sw[c]),kc->nkhw',
+                 {'sh': shift_h, 'sw': shift_w})]
 
 # Benchmark
-for a_shape, b_shape, c_shape, torch_fn, expr in configs:
+for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
     # initialize input tensors
     a = np.random.randn(*a_shape).astype(np.float32)
     b = np.random.randn(*b_shape).astype(np.float32)
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
+    ta = triton.ops._einsum.pad(a, [1,1,1,1])
     # triton output
-    tc = triton.ops.einsum(expr, a, b, c_shape, dict(), bench = True)
+    tc = triton.ops.einsum(expr, ta, b, c_shape, arrays = arrays, bench = True)
     # reference output
     if torch_fn:
         rc = torch_fn(a, b)
