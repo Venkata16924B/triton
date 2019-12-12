@@ -336,6 +336,7 @@ void generator::visit_unmasked_load_inst(ir::unmasked_load_inst* x) {
 }
 
 void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
+  bool predicated = false;
   // find vector size
   ir::value *ptr = x->get_pointer_operand();
   size_t ld = layouts_->get(ptr)->order[0];
@@ -353,47 +354,99 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
       Value *ptr = pointers->get_value(idx);
       ptr = builder_->CreateBitCast(ptr, PointerType::get(VectorType::get(result->get_ty(), vector_size),
                                                         ptr->getType()->getPointerAddressSpace()));
-
       Value *mask = masks->get_value(idx);
-      BasicBlock *current_bb = builder_->GetInsertBlock();
-      Function *parent = builder_->GetInsertBlock()->getParent();
-      BasicBlock *mask_then_bb = BasicBlock::Create(*ctx_, "mask_then", parent);
-      BasicBlock *mask_done_bb = BasicBlock::Create(*ctx_, "mask_done", parent);
-      builder_->CreateCondBr(mask, mask_then_bb, mask_done_bb);
-      builder_->SetInsertPoint(mask_then_bb);
-      Value *result_then = builder_->CreateLoad(ptr);
-      builder_->CreateBr(mask_done_bb);
-      builder_->SetInsertPoint(mask_done_bb);
-      Value *current_result = nullptr;
-      if(false_values){
-        current_result = builder_->CreatePHI(result_then->getType(), 2);
-        ((PHINode*)current_result)->addIncoming(result_then, mask_then_bb);
-        Value *result_false = false_values->get_value(idx);
-        if(result_then->getType()->isVectorTy())
-          result_false = builder_->CreateVectorSplat(vector_size, llvm::UndefValue::get(result_false->getType()));
-        ((PHINode*)current_result)->addIncoming(result_false, current_bb);
+
+      if(predicated) {
+        // extract constant GEP offset
+        ConstantInt *cst = nullptr;
+        if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
+          if(gep->getNumIndices() == 1)
+            cst = dyn_cast<ConstantInt>(gep->idx_begin());
+        std::string offset = "";
+        if(cst)
+          offset = " + " + std::to_string(cst->getValue().getSExtValue()*2*vector_size);
+        // Inline asm type
+        Type *ret_ty = ptr->getType()->getPointerElementType()->getScalarType();
+        size_t num_rep = 32 / ret_ty->getScalarSizeInBits();
+        if(num_rep > 1)
+          ret_ty = VectorType::get(ret_ty, num_rep);
+        if(vector_size > 1)
+          ret_ty = StructType::get(*ctx_, std::vector<Type*>(vector_size, ret_ty));
+        FunctionType *ty = FunctionType::get(ret_ty, {mask->getType(), ptr->getType()}, false);
+        // Inline asm string
+        std::string ld_asm_str = "@$0 ld.global.nc";
+        if(vector_size > 1)
+          ld_asm_str += ".v" + std::to_string(vector_size);
+        ld_asm_str += ".b32 ";
+        if(vector_size > 1)
+          ld_asm_str += "{";
+        for(size_t i = 0; i < vector_size; i++){
+          if(i > 0)
+            ld_asm_str += ", ";
+          ld_asm_str += "$" + std::to_string(1 + i);
+        }
+        if(vector_size > 1)
+          ld_asm_str += "}";
+        ld_asm_str += ", [$" + std::to_string(1 + vector_size) + offset + "];";
+        // Inline asm string for false values
+        std::string mov_asm_str;
+        if(false_values){
+          mov_asm_str += "@!$0 mov";
+          if(vector_size > 1)
+            mov_asm_str += ".v" + std::to_string(vector_size);
+          mov_asm_str += ".b32 ";
+          if(vector_size > 1)
+            mov_asm_str += "{";
+          for(size_t i = 0; i < vector_size; i++){
+            if(i > 0)
+              mov_asm_str += ", ";
+            mov_asm_str += "$" + std::to_string(1 + i);
+          }
+          if(vector_size > 1)
+            mov_asm_str += "}, {";
+          else
+            mov_asm_str += ", ";
+          for(size_t i = 0; i < vector_size; i++){
+            if(i > 0)
+              mov_asm_str += ", ";
+            mov_asm_str += "0x0";
+          }
+          if(vector_size > 1)
+            mov_asm_str += "}";
+          mov_asm_str += ";";
+        }
+        std::string asm_str = ld_asm_str + "\n\t" + mov_asm_str;
+        std::string constraints = "b";
+        for(size_t i = 0; i < vector_size; i++)
+          constraints += ",=r";
+        constraints += ",l";
+        InlineAsm *iasm = InlineAsm::get(ty, asm_str, constraints, true);
+        // store result
+        packets[id] = builder_->CreateCall(iasm, {mask, ptr});
       }
-      else
-        current_result = result_then;
-
-//      ConstantInt *cst = nullptr;
-//      if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
-//        if(gep->getNumIndices() == 1)
-//          cst = dyn_cast<ConstantInt>(gep->idx_begin());
-//          llvm::Value* mask = masks->get_value(idx);
-//          std::string offset = "";
-//          if(cst)
-//            offset = " + " + std::to_string(cst->getValue().getSExtValue()*2*vector_size);
-//          Type *fp16x2_ty = VectorType::get(builder_->getHalfTy(), 2);
-//          Type *fp16x2_pack4_ty = StructType::get(*ctx_, {fp16x2_ty, fp16x2_ty, fp16x2_ty, fp16x2_ty});
-//          FunctionType *ty = FunctionType::get(fp16x2_pack4_ty, {mask->getType(), ptr->getType()}, false);
-//          std::string asm_str = "@$0 ld.global.nc.v4.b32 {$1, $2, $3, $4}, [$5" + offset + "];";
-//          if(false_values)
-//            asm_str += "\n\t@!$0 mov.v4.b32 {$1, $2, $3, $4}, {0, 0, 0, 0};";
-//          InlineAsm *iasm = InlineAsm::get(ty, asm_str, "b,=r,=r,=r,=r,l", true);
-//          Value *current_result = builder_->CreateCall(iasm, {mask, ptr});
-
-      packets[id] = current_result;
+      else {
+        BasicBlock *current_bb = builder_->GetInsertBlock();
+        Function *parent = builder_->GetInsertBlock()->getParent();
+        BasicBlock *mask_then_bb = BasicBlock::Create(*ctx_, "mask_then", parent);
+        BasicBlock *mask_done_bb = BasicBlock::Create(*ctx_, "mask_done", parent);
+        builder_->CreateCondBr(mask, mask_then_bb, mask_done_bb);
+        builder_->SetInsertPoint(mask_then_bb);
+        Value *result_then = builder_->CreateLoad(ptr);
+        builder_->CreateBr(mask_done_bb);
+        builder_->SetInsertPoint(mask_done_bb);
+        Value *current_result = nullptr;
+        if(false_values){
+          current_result = builder_->CreatePHI(result_then->getType(), 2);
+          ((PHINode*)current_result)->addIncoming(result_then, mask_then_bb);
+          Value *result_false = false_values->get_value(idx);
+          if(result_then->getType()->isVectorTy())
+            result_false = builder_->CreateVectorSplat(vector_size, llvm::UndefValue::get(result_false->getType()));
+          ((PHINode*)current_result)->addIncoming(result_false, current_bb);
+        }
+        else
+          current_result = result_then;
+        packets[id] = current_result;
+      }
     }
   });
   // extract result element
@@ -402,10 +455,22 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
     unsigned vector_size = std::min<unsigned>(result->axis(ld).contiguous, alignment);
     unsigned linear = result->get_linear_index(idx);
     unsigned id = linear / vector_size;
-//        Value *tmp = builder_->CreateExtractValue(packets.at(id), {(linear % vector_size) / 2});
-//        Value *res = builder_->CreateExtractElement(tmp, (linear % vector_size) % 2);
-//        result->set_value(idx, res);
-    result->set_value(idx, builder_->CreateExtractElement(packets.at(id), linear % vector_size));
+    Value *res = packets.at(id);
+
+    if(predicated){
+      unsigned sub_vector_size = 1;
+      if(res->getType()->isVectorTy())
+        sub_vector_size = res->getType()->getVectorNumElements();
+      if(vector_size > 1){
+        res = builder_->CreateExtractValue(res, {(linear % vector_size) / sub_vector_size});
+        if(res->getType()->isVectorTy())
+          res = builder_->CreateExtractElement(res, (linear % vector_size) % sub_vector_size);
+      }
+      result->set_value(idx, res);
+    }
+    else{
+      result->set_value(idx, builder_->CreateExtractElement(res, linear % vector_size));
+    }
   });
 }
 
@@ -1083,7 +1148,7 @@ void generator::finalize_shared_layout(analysis::layout_shared_t *shared) {
       BasicBlock *llvm_inc_block = (BasicBlock*)vmap_.at(inc_block);
       shared_tile *inc_shared = (shared_tile*)tmap_.at(inc_val);
       if(inc_val == info.latch){
-        builder_->SetInsertPoint(llvm_inc_block->getTerminator());
+        builder_->SetInsertPoint(llvm_inc_block->getFirstNonPHI());
         Value *next_offset = builder_->CreateNeg(offset);
         offset->addIncoming(next_offset, llvm_inc_block);
       }

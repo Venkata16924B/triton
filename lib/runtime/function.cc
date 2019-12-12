@@ -187,7 +187,7 @@ function::caller function::autotune(driver::stream* stream, const grid_fn_ty& gr
     // benchmark
     ir::function *tmp = ir->get_function_list()[0];
     caller call(tmp, std::move(bin), opt);
-    double ts = tools::bench([&]() { call(stream, grid_fn(opt), args); }, stream);
+    double ts = tools::bench([&]() { call(stream, grid_fn(opt), args); }, stream, true);
     // save best
     if(ts < best_ts) {
       best_ts = ts;

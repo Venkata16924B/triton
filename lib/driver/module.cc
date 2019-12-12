@@ -215,6 +215,14 @@ ocl_module::ocl_module(driver::context * context, std::unique_ptr<llvm::Module> 
 /* ------------------------ */
 //         CUDA             //
 /* ------------------------ */
+static bool find_and_replace(std::string& str, const std::string& begin, const std::string& end, const std::string& target){
+  size_t start_replace = str.find(begin);
+  size_t end_replace = str.find(end, start_replace);
+  if(start_replace == std::string::npos)
+    return false;
+  str.replace(start_replace, end_replace + 1 - start_replace, target);
+  return true;
+}
 
 std::string cu_module::compile_llvm_module(std::unique_ptr<llvm::Module> module, driver::device* device) {
    // options
@@ -231,10 +239,9 @@ std::string cu_module::compile_llvm_module(std::unique_ptr<llvm::Module> module,
    llvm::SmallVector<char, 0> buffer;
    module::compile_llvm_module(std::move(module), "nvptx64-nvidia-cuda", sm, "", buffer, "ptx63", Assembly);
    std::string result(buffer.begin(), buffer.end());
-   size_t start_replace = result.find(".version");
-   size_t end_replace = result.find('\n', start_replace);
-   assert(start_replace != std::string::npos);
-   result.replace(start_replace, end_replace - start_replace, ".version 6.4");
+   find_and_replace(result, ".version", "\n", ".version 6.4\n");
+   while(find_and_replace(result, "\t// begin inline asm", "\n", ""));
+   while(find_and_replace(result, "\t// end inline asm", "\n", ""));
    return result;
 }
 

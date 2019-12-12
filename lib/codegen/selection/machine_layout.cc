@@ -91,9 +91,9 @@ machine_layout_shared_t::machine_layout_shared_t(Module *mod, Builder *builder, 
       builder_->SetInsertPoint(&*parent->getFirstNonPHI());
     // create pointers
     ptr_ = builder_->CreatePHI(ptr_ty, 2);
+    offset_ = builder_->CreatePHI(builder_->getInt32Ty(), 2);
     pre_ptr_ = builder_->CreateGEP(sh_mem_ptr_, builder_->getInt32(alloc_->offset(layout_)));
     pre_ptr_ = builder_->CreateBitCast(pre_ptr_, ptr_->getType());
-    offset_ = builder_->CreatePHI(builder_->getInt32Ty(), 2);
     next_ptr_ = builder_->CreateGEP(ptr_, offset_, "next_ptr");
     builder_->SetInsertPoint(current);
   }

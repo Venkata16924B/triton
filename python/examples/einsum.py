@@ -1,36 +1,36 @@
 import triton
 import torch
 import numpy as np
-import utils
+#import utils
 
 configs = []
 
 # Matrix multiplication
 MNK = [
-       (512, 512 ,512), 
+       #(512, 512 ,512), 
        (2048, 2048, 2048), 
-       (8192, 8192, 8192),
+       #(8192, 8192, 8192),
 
-       (64, 64, 64000),
-       (64, 64, 128000),
-       (256, 256, 64000),
-       (256, 256, 128000),
+       #(64, 64, 64000),
+       #(64, 64, 128000),
+       #(256, 256, 64000),
+       #(256, 256, 128000),
 
-       (1536, 16, 1536),
-       (1536, 32, 1536),
-       (1536, 64, 1536),
-       (1536, 128, 1536),
-       (4096, 16, 4096),
-       (4096, 32, 4096),
-       (4096, 64, 4096),
-       (4096, 128, 4096)
+       #(1536, 16, 1536),
+       #(1536, 32, 1536),
+       #(1536, 64, 1536),
+       #(1536, 128, 1536),
+       #(4096, 16, 4096),
+       #(4096, 32, 4096),
+       #(4096, 64, 4096),
+       #(4096, 128, 4096)
       ]
-#for M, N, K in MNK:
-#    configs += [([M, K], [K, N], [M, N], None, 'mk,kn->mn')]
-#for M, N, K in MNK:
-#    configs += [([M, K], [M, N], [M, N], None, 'mk,mn->kn')]
-#for M, N, K in MNK:
-#    configs += [([M, N], [K, N], [M, N], None, 'mn,kn->mk')]
+for M, N, K in MNK:
+    configs += [([M, K], [K, N], [M, N], None, 'mk,kn->mn', dict())]
+for M, N, K in MNK:
+    configs += [([M, K], [M, N], [M, N], None, 'mk,mn->kn', dict())]
+for M, N, K in MNK:
+    configs += [([M, N], [K, N], [M, N], None, 'mn,kn->mk', dict())]
 
 # Relative attention
 NTHSE = [
@@ -81,21 +81,21 @@ NCHWKRS = [
 #                 dict())]
 
 # Shift convolution
-for N, C, H, W, K, R, S in NCHWKRS:
-    shift_h = np.random.randint(3, size=C, dtype=np.int32) - 1
-    shift_w = np.random.randint(3, size=C, dtype=np.int32) - 1
-    shift_torch =  np.column_stack((shift_h*-1, shift_w*-1))
-    shift_torch = torch.from_numpy(shift_torch).cuda()
-    def shift_conv(a, b):
-        a = utils.shift.apply(a, shift_torch)
-        b = b.reshape(K, C, 1, 1)
-        return torch.nn.functional.conv2d(a, b)
-    configs += [([N, C, H, W], 
-                 [K, C], 
-                 [N, K, H, W], 
-                 shift_conv, 
-                 'nc(h+sh[c])(w+sw[c]),kc->nkhw',
-                 {'sh': shift_h, 'sw': shift_w})]
+# for N, C, H, W, K, R, S in NCHWKRS:
+#     shift_h = np.random.randint(3, size=C, dtype=np.int32) - 1
+#     shift_w = np.random.randint(3, size=C, dtype=np.int32) - 1
+#     shift_torch =  np.column_stack((shift_h*-1, shift_w*-1))
+#     shift_torch = torch.from_numpy(shift_torch).cuda()
+#     def shift_conv(a, b):
+#         a = utils.shift.apply(a, shift_torch)
+#         b = b.reshape(K, C, 1, 1)
+#         return torch.nn.functional.conv2d(a, b)
+#     configs += [([N, C, H, W], 
+#                  [K, C], 
+#                  [N, K, H, W], 
+#                  shift_conv, 
+#                  'nc(h+sh[c])(w+sw[c]),kc->nkhw',
+#                  {'sh': shift_h, 'sw': shift_w})]
 
 # Benchmark
 for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:

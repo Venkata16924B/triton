@@ -47,7 +47,7 @@ class _einsum(triton.function):
         return TritonCodePrinter(axes_0, axes_1, axes_2).doprint(expr)
 
 
-    def unpack_cc(tile, axes, prefix):
+    def unpack_cc(tile, axes, prefix, remat):
         ret = ''
         axes = list(map(str, axes))
         for i, d in enumerate(reversed(axes)):
@@ -55,8 +55,10 @@ class _einsum(triton.function):
                 break
             currs = ''.join(axes[: len(axes) - i])
             nexts = ''.join(axes[: len(axes) - (i + 1)])
-            ret += f'    int {prefix}{nexts}[{tile}] = r{currs} / dim_{d};\n'
-            ret += f'    int {prefix}{d}[{tile}] = r{currs} % dim_{d};\n'
+            ty = '' if remat else 'int'
+            sz = '' if remat else f'[{tile}]'
+            ret += f'    {ty} {prefix}{nexts}{sz} = r{currs} / dim_{d};\n'
+            ret += f'    {ty} {prefix}{d}{sz} = r{currs} % dim_{d};\n'
         return ret
 
     def strides_cc(name, expr):
@@ -126,25 +128,13 @@ __global__ void {name}(
     // create ranges
 """
         rk = 'r{}'.format(''.join(map(str,axes_k)))
-        src += f"    int {rk}[TK] = off_k + 0 ... TK;\n"
-
-        for axes, tile, pid in zip([axes_m, axes_n, axes_b],
-                                   ['TM', 'TN', 'TB'],
-                                   ['pid_m', 'pid_n', 'pid_b']):
+        for axes, tile, off in zip([axes_m, axes_n, axes_b, axes_k],
+                                   ['TM', 'TN', 'TB', 'TK'],
+                                   ['pid_m*TM', 'pid_n*TN', 'pid_b*TB', 'off_k']):
             currs = ''.join(map(str,axes))
             if axes:
-                src += f"    int r{currs}[{tile}] = {pid} * {tile} + 0 ... {tile};\n"
-        
-
-        if axes_m:
-            src += _einsum.unpack_cc('TM', axes_m, 'r')
-        if axes_n:
-            src += _einsum.unpack_cc('TN', axes_n, 'r')
-        if axes_b:
-            src += _einsum.unpack_cc('TB', axes_b, 'r')
-        if axes_k:
-            src += _einsum.unpack_cc('TK', axes_k, 'r')
-
+                src += f"    int r{currs}[{tile}] = {off} + 0 ... {tile};\n"
+                src += _einsum.unpack_cc(tile, axes, 'r', False)
 
         src += """    
 
@@ -177,13 +167,11 @@ __global__ void {name}(
     // initialize pointers to B look-up table
     int *pbdelta[TK]  = BD  + 0 ... TK;"""
 
-        #print(axes_k)
         src += f"""
     
     // prefetch
-    {rk} -= off_k;
-    bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < matmul_k;
-    bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < matmul_k;
+    bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < matmul_k + off_k;
+    bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < matmul_k + off_k;
     TYPE a[TM, TK, TB] = checka ? *pa : 0;
     TYPE b[TK, TN, TB] = checkb ? *pb : 0;
 
@@ -209,18 +197,26 @@ __global__ void {name}(
         pbdelta += TK;"""
 
         src += f"""
-        bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < k - TK;
-        bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < k - TK;
-        a = checka ? *pa : 0;
-        b = checkb ? *pb : 0;
+        //bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < k - TK;
+        //bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < k - TK;
+        //a = checka ? *pa : 0;
+        //b = checkb ? *pb : 0;
+        a = *pa;
+        b = *pb;
     }}
-    acc = acc * alpha;
+    // acc = acc * alpha;
 
- """
+    // re-materialize ranges
+    """
+        for axes, tile, off in zip([axes_m, axes_n, axes_b],
+                                   ['TM', 'TN', 'TB'],
+                                   ['pid_m*TM', 'pid_n*TN', 'pid_b*TB']):
+            currs = ''.join(map(str,axes))
+            if axes:
+                src += f"    r{currs} = {off} + 0 ... {tile};\n"
+                src += _einsum.unpack_cc(tile, axes, 'r', True)
 
-    
         src += """
-
     // initialize pointers to C
     TYPE *pc[TM, TN, TB] = C + off_c"""
         for i, sym in enumerate(expr_c):
@@ -309,7 +305,7 @@ __global__ void {name}(
         args += [nextoff[sk] for sk in axes]
         args += [x for _, x in arrays]
         delta = fn(*args)
-        return delta, _einsum.lut_mode(delta)
+        return delta, _einsum.lut_mode(delta[:-step])
 
     ############################
     ## Einsum parsing
