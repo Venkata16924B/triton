@@ -30,36 +30,26 @@ private:
     high_resolution_clock::time_point _start;
 };
 
-inline double bench(std::function<void()> const & op, driver::stream * stream, bool normalize = true)
+inline double bench(std::function<void()> const & op, driver::stream * stream)
 {
-    timer tmr;
+//  const driver::device * device = stream->context()->device();
+  timer tmr;
+  std::vector<size_t> times;
+  double total_time = 0;
+  op();
+  stream->synchronize();
+  while(total_time*1e-9 < 1e-2){
+    float norm = 1;
+    // normalize clock if possible to reduce noise in auto-tuning
+    if(auto cu_device = dynamic_cast<const triton::driver::cu_device*>(stream->context()->device()))
+      norm = (float)cu_device->current_sm_clock()/cu_device->max_sm_clock();
+    tmr.start();
     op();
     stream->synchronize();
-    // estimate number of repeats so that the total time stays under .1s
-    size_t repeat = 0;
-    std::vector<size_t> times;
-    double total_time = 0;
-    while(total_time*1e-9 < 1e-1){
-      float norm = 1;
-      // normalize clock if possible to reduce noise in auto-tuning
-      if(auto cu_device = dynamic_cast<const triton::driver::cu_device*>(stream->context()->device()))
-        norm = (float)cu_device->current_sm_clock()/cu_device->max_sm_clock();
-      tmr.start();
-      op();
-      stream->synchronize();
-      total_time+=tmr.get().count();
-      if(normalize)
-        times.push_back(norm*tmr.get().count());
-      repeat += 1;
-    }
-    if(normalize)
-      return *std::min_element(times.begin(), times.end());
-    // enqueues a batch of task to make sure it runs at high clock speed
-    tmr.start();
-    for(size_t i = 0; i < repeat; i++)
-      op();
-    stream->synchronize();
-    return (double)tmr.get().count() / repeat;
+    times.push_back(norm*tmr.get().count());
+    total_time+=times.back();
+  }
+  return *std::min_element(times.begin(), times.end());
 }
 
 }

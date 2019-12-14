@@ -30,6 +30,7 @@ def run_tf():
 
 
 def run_torch():
+  torch.set_num_threads(1)
   torch.manual_seed(0)
   M, N, K = 2048, 2048, 2048
   a = torch.randn(M, K).cuda()
@@ -43,20 +44,20 @@ def run_torch():
   triton_d = triton.ops.dot(triton_c, b, True, False, 1)
   triton_y = torch.mean(triton_d)
   # torch gradient
-  torch_y.backward()
-  torch_da = a.grad.clone()
-  torch_db = b.grad.clone()
+  #torch_y.backward()
+  #torch_da = a.grad.clone()
+  #torch_db = b.grad.clone()
   # triton gradient
-  a.grad.zero_()
-  b.grad.zero_()
-  triton_y.backward()
-  triton_da = a.grad.clone()
-  triton_db = b.grad.clone()
+  #a.grad.zero_()
+  #b.grad.zero_()
+  #triton_y.backward()
+  #triton_da = a.grad.clone()
+  #triton_db = b.grad.clone()
 
   nanosec = triton.bench_registry[triton_d]
   print('TFLOPS:', 2. * M * N * K / nanosec * 1e-3)
-  print('Diff DA:', (torch_da - triton_da).max())
-  print('Diff DB:', (torch_db - triton_db).max())
+  #print('Diff DA:', (torch_da - triton_da).max())
+  #print('Diff DB:', (torch_db - triton_db).max())
 
 try:
   import tensorflow as tf

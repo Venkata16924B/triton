@@ -143,6 +143,7 @@ inline Type *llvm_type(ir::type *ty, LLVMContext &ctx) {
     case ir::type::TokenTyID:     return Type::getTokenTy(ctx);
     default: break;
   }
+  std::cout << ty->get_type_id() << std::endl;
   // unknown type
   throw std::runtime_error("unknown conversion from ir::type to Type");
 }
@@ -178,10 +179,10 @@ generator::generator(analysis::axes *a_axes,
                     analysis::layout *layouts,
                     analysis::align *alignment,
                     analysis::allocation *alloc,
-                     target *tgt,
+                     target *tgt, const std::string &name_suffix,
                     unsigned num_warps)
   : a_axes_(a_axes), layouts_(layouts), alignment_(alignment), alloc_(alloc),
-    tgt_(tgt), num_warps_(num_warps) {
+    tgt_(tgt), name_suffix_(name_suffix), num_warps_(num_warps) {
 
 }
 
@@ -299,7 +300,6 @@ void generator::visit_unmasked_load_inst(ir::unmasked_load_inst* x) {
   size_t ld = layouts_->get(ptr)->order[0];
   unsigned alignment = std::max<int>(alignment_->get(ptr, ld), 1);
 
-
   // vector loads
   std::map<unsigned, Value*> packets;
   for_each(x, [&](indices_t idx){
@@ -309,7 +309,6 @@ void generator::visit_unmasked_load_inst(ir::unmasked_load_inst* x) {
     if(ld < x->get_type()->get_tile_rank())
       contiguous = result->axis(ld).contiguous;
     unsigned vector_size = std::min<unsigned>(contiguous, alignment);
-
     unsigned linear = result->get_linear_index(idx);
     unsigned id = linear / vector_size;
     if(linear % vector_size == 0) {
@@ -336,7 +335,7 @@ void generator::visit_unmasked_load_inst(ir::unmasked_load_inst* x) {
 }
 
 void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
-  bool predicated = false;
+  bool predicated = true;
   // find vector size
   ir::value *ptr = x->get_pointer_operand();
   size_t ld = layouts_->get(ptr)->order[0];
@@ -374,51 +373,54 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
           ret_ty = StructType::get(*ctx_, std::vector<Type*>(vector_size, ret_ty));
         FunctionType *ty = FunctionType::get(ret_ty, {mask->getType(), ptr->getType()}, false);
         // Inline asm string
-        std::string ld_asm_str = "@$0 ld.global.nc";
+        std::string asm_str = "@$0 ld.global.nc";
         if(vector_size > 1)
-          ld_asm_str += ".v" + std::to_string(vector_size);
-        ld_asm_str += ".b32 ";
+          asm_str += ".v" + std::to_string(vector_size);
+        asm_str += ".b32 ";
         if(vector_size > 1)
-          ld_asm_str += "{";
+          asm_str += "{";
         for(size_t i = 0; i < vector_size; i++){
           if(i > 0)
-            ld_asm_str += ", ";
-          ld_asm_str += "$" + std::to_string(1 + i);
+            asm_str += ", ";
+          asm_str += "$" + std::to_string(1 + i);
         }
         if(vector_size > 1)
-          ld_asm_str += "}";
-        ld_asm_str += ", [$" + std::to_string(1 + vector_size) + offset + "];";
-        // Inline asm string for false values
-        std::string mov_asm_str;
-        if(false_values){
-          mov_asm_str += "@!$0 mov";
+          asm_str += "}";
+        asm_str += ", [$" + std::to_string(1 + vector_size) + offset + "];";
+        llvm::Value *false_value = false_values->get_value(idx);
+        if(!isa<UndefValue>(false_value)){
+          assert(isa<Constant>(false_value));
+          // Inline asm string for false values
+          asm_str += "\n\t";
+          asm_str += "@!$0 mov";
           if(vector_size > 1)
-            mov_asm_str += ".v" + std::to_string(vector_size);
-          mov_asm_str += ".b32 ";
+            asm_str += ".v" + std::to_string(vector_size);
+          asm_str += ".b32 ";
           if(vector_size > 1)
-            mov_asm_str += "{";
+            asm_str += "{";
           for(size_t i = 0; i < vector_size; i++){
             if(i > 0)
-              mov_asm_str += ", ";
-            mov_asm_str += "$" + std::to_string(1 + i);
+              asm_str += ", ";
+            asm_str += "$" + std::to_string(1 + i);
           }
           if(vector_size > 1)
-            mov_asm_str += "}, {";
+            asm_str += "}, {";
           else
-            mov_asm_str += ", ";
+            asm_str += ", ";
           for(size_t i = 0; i < vector_size; i++){
             if(i > 0)
-              mov_asm_str += ", ";
-            mov_asm_str += "0x0";
+              asm_str += ", ";
+            asm_str += "0x0";
           }
           if(vector_size > 1)
-            mov_asm_str += "}";
-          mov_asm_str += ";";
+            asm_str += "}";
+          asm_str += ";";
         }
-        std::string asm_str = ld_asm_str + "\n\t" + mov_asm_str;
+
+        bool is_float = ptr->getType()->getPointerElementType()->getScalarType()->isFloatTy();
         std::string constraints = "b";
         for(size_t i = 0; i < vector_size; i++)
-          constraints += ",=r";
+          constraints += ",=" + std::string(is_float ? "f" : "r");
         constraints += ",l";
         InlineAsm *iasm = InlineAsm::get(ty, asm_str, constraints, true);
         // store result
@@ -844,8 +846,8 @@ void generator::visit_reduce_inst(ir::reduce_inst* x) {
     switch(op) {
       case ir::reduce_inst::ADD: return builder_->CreateAdd(x, y);
       case ir::reduce_inst::SUB: return builder_->CreateSub(x, y);
-      case ir::reduce_inst::MAX: return builder_->CreateMaximum(x, y);
-      case ir::reduce_inst::MIN: return builder_->CreateMinimum(x, y);
+      case ir::reduce_inst::MAX: return builder_->CreateMaxNum(x, y);
+      case ir::reduce_inst::MIN: return builder_->CreateMinNum(x, y);
       case ir::reduce_inst::FADD: return builder_->CreateFAdd(x, y);
       case ir::reduce_inst::FSUB: return builder_->CreateFSub(x, y);
       case ir::reduce_inst::FMAX: return builder_->CreateSelect(builder_->CreateFCmpOGT(x, y), x, y);
@@ -885,7 +887,7 @@ void generator::visit_reduce_inst(ir::reduce_inst* x) {
     indices_t write_idx = x.first;
     write_idx[axis] = lane;
     // shared memory write  pointer
-    Value *write_offset = shared_tile::shared_offset(*builder_, stile->get_shapes(), stile->get_perm(), stile->get_order(), write_idx);
+    Value *write_offset = shared_tile::shared_offset(1, *builder_, stile->get_shapes(), stile->get_perm(), stile->get_order(), write_idx);
     Value *write_ptr = builder_->CreateGEP(base_ptr, write_offset);
     // initialize shared memory
     tgt_->add_barrier(mod_, *builder_);
@@ -896,7 +898,7 @@ void generator::visit_reduce_inst(ir::reduce_inst* x) {
       indices_t current(write_idx.size(), builder_->getInt32(0));
       current[axis] = builder_->getInt32(i);
       // shared memory offset
-      Value *read_offset = shared_tile::shared_offset(*builder_, stile->get_shapes(), stile->get_perm(), stile->get_order(), current);
+      Value *read_offset = shared_tile::shared_offset(1, *builder_, stile->get_shapes(), stile->get_perm(), stile->get_order(), current);
       Value *is_active = builder_->CreateICmpULT(lane, builder_->getInt32(i));
       read_offset = builder_->CreateSelect(is_active, read_offset, builder_->getInt32(0));
       // shared memory read pointer
@@ -914,7 +916,7 @@ void generator::visit_reduce_inst(ir::reduce_inst* x) {
   for_each(x, [&](indices_t idx) {
     indices_t red_idx = idx;
     red_idx.insert(red_idx.begin() + axis, builder_->getInt32(0));
-    Value *read_offset = shared_tile::shared_offset(*builder_, stile->get_shapes(), stile->get_perm(), stile->get_order(),  red_idx);
+    Value *read_offset = shared_tile::shared_offset(1, *builder_, stile->get_shapes(), stile->get_perm(), stile->get_order(),  red_idx);
     Value *read_ptr = builder_->CreateGEP(base_ptr, read_offset);
     set_value(x, idx, builder_->CreateLoad(read_ptr));
   });
@@ -1049,7 +1051,7 @@ void generator::visit_function(ir::function* fn) {
     fn_args_ty.push_back(builder_->getInt32Ty());
     fn_ty = FunctionType::get(fn_ret_ty, fn_args_ty, false);
   }
-  Function *ret = Function::Create(fn_ty, Function::ExternalLinkage, fn->get_name(), mod_);
+  Function *ret = Function::Create(fn_ty, Function::ExternalLinkage, fn->get_name() + name_suffix_, mod_);
   // set attributes
   for(auto attr_pair: fn->attrs()){
     unsigned id = attr_pair.first;
@@ -1148,13 +1150,13 @@ void generator::finalize_shared_layout(analysis::layout_shared_t *shared) {
       BasicBlock *llvm_inc_block = (BasicBlock*)vmap_.at(inc_block);
       shared_tile *inc_shared = (shared_tile*)tmap_.at(inc_val);
       if(inc_val == info.latch){
-        builder_->SetInsertPoint(llvm_inc_block->getFirstNonPHI());
+        builder_->SetInsertPoint(llvm_inc_block->getTerminator());
         Value *next_offset = builder_->CreateNeg(offset);
         offset->addIncoming(next_offset, llvm_inc_block);
       }
       else {
         unsigned num_bytes = shared->ty->get_primitive_size_in_bits() / 8;
-        offset->addIncoming(builder_->getInt32(shared->size / (2*num_bytes)), llvm_inc_block);
+        offset->addIncoming(builder_->getInt32(4 * shared->size / (2*num_bytes)), llvm_inc_block);
       }
       ptr->addIncoming(inc_shared->get_pointer(), llvm_inc_block);
     }

@@ -55,10 +55,10 @@ class _einsum(triton.function):
                 break
             currs = ''.join(axes[: len(axes) - i])
             nexts = ''.join(axes[: len(axes) - (i + 1)])
-            ty = '' if remat else 'int'
+            ty = '' if remat else 'int '
             sz = '' if remat else f'[{tile}]'
-            ret += f'    {ty} {prefix}{nexts}{sz} = r{currs} / dim_{d};\n'
-            ret += f'    {ty} {prefix}{d}{sz} = r{currs} % dim_{d};\n'
+            ret += f'    {ty}{prefix}{nexts}{sz} = r{currs} / dim_{d};\n'
+            ret += f'    {ty}{prefix}{d}{sz} = r{currs} % dim_{d};\n'
         return ret
 
     def strides_cc(name, expr):
@@ -80,9 +80,8 @@ __global__ void {name}(
             , TYPE * C
             , int * locks
             , float alpha
-            , int matmul_m, int matmul_n, int matmul_k __multipleof(64)
+            , int matmul_m, int matmul_n, int matmul_k __multipleof(32)
             , int div_m
-            , int off_a, int off_b, int off_c
             """
         for dim in [axes_m, axes_n, axes_k, axes_b]:
             for d in dim:
@@ -117,6 +116,9 @@ __global__ void {name}(
     // get batch program id
     int pid_b = get_program_id(1);
 
+#if TZ == 1
+    int off_k = 0;
+#else
     // get reduction sub-group program id
     int pid_z = get_program_id(2);
     int grid_z = get_num_programs(2);
@@ -124,7 +126,8 @@ __global__ void {name}(
     int rem_z = matmul_k % TZ;
     int off_k = pid_z * div_z;
     matmul_k = select(pid_z < rem_z, div_z, div_z + rem_z);
-
+#endif
+    
     // create ranges
 """
         rk = 'r{}'.format(''.join(map(str,axes_k)))
@@ -139,33 +142,45 @@ __global__ void {name}(
         src += """    
 
     // initialize pointers to A
-    TYPE *pa[TM, TK, TB] = A + off_a"""
+    int offa[TM, TK, TB] = """
         for i, sym in enumerate(expr_a):
             ccode = _einsum.print_cc(sym, axes_m, axes_k, axes_b)
             stride = f'stride_a_{i}' if i < len(expr_a) - 1 else '1'
-            src += f" + ({ccode}) * {stride}\n                            "
+            if i > 0:
+                src += ' + '
+            src += f"({ccode}) * {stride}\n                            "
         src += ';'
+
+        src += """
+    TYPE *pa[TM, TK, TB] = A + offa;"""
 
         if not lut_mode_a == _einsum.LUT_MODE.SCALAR:
             src += f"""
     // initialize pointers to A look-up table
-    int *padelta[TK]  = AD  + 0 ... TK;"""
+    int offadelta[TK] = off_k + 0 ... TK;
+    int *padelta[TK]  = AD  + offadelta;"""
     
         src += """
 
     // initialize pointers to B
-    TYPE *pb[TK, TN, TB] = B + off_b"""
+    int offb[TK, TN, TB] = """
         for i, sym in enumerate(expr_b):
             ccode = _einsum.print_cc(sym, axes_k, axes_n, axes_b)
             stride = f'stride_b_{i}' if i < len(expr_b) - 1 else '1'
-            src += f" + ({ccode}) * {stride}\n                            "
+            if i > 0:
+                src += ' + '
+            src += f"({ccode}) * {stride}\n                            "
         src += ';'
+
+        src += """
+    TYPE *pb[TK, TN, TB] = B + offb;"""
 
 
         if not lut_mode_b == _einsum.LUT_MODE.SCALAR:
             src += f"""
     // initialize pointers to B look-up table
-    int *pbdelta[TK]  = BD  + 0 ... TK;"""
+    int offbdelta[TK] = off_k + 0 ... TK;
+    int *pbdelta[TK]  = BD  + offbdelta;"""
 
         src += f"""
     
@@ -197,17 +212,15 @@ __global__ void {name}(
         pbdelta += TK;"""
 
         src += f"""
-        //bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < k - TK;
-        //bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < k - TK;
-        //a = checka ? *pa : 0;
-        //b = checkb ? *pb : 0;
-        a = *pa;
-        b = *pb;
+        bool checka[TM, TK, TB] = k > TK;
+        bool checkb[TK, TN, TB] = k > TK;
+        a = *?(checka)pa;
+        b = *?(checkb)pb;
     }}
-    // acc = acc * alpha;
+    //acc = acc * alpha;
 
     // re-materialize ranges
-    """
+"""
         for axes, tile, off in zip([axes_m, axes_n, axes_b],
                                    ['TM', 'TN', 'TB'],
                                    ['pid_m*TM', 'pid_n*TN', 'pid_b*TB']):
@@ -218,14 +231,18 @@ __global__ void {name}(
 
         src += """
     // initialize pointers to C
-    TYPE *pc[TM, TN, TB] = C + off_c"""
+    int offc[TM, TN, TB] = """
         for i, sym in enumerate(expr_c):
-            ccode = _einsum.print_cc(sym, axes_m, axes_n, axes_b)
             stride = f'stride_c_{i}' if i < len(expr_c) - 1 else '1'
-            src += f" + ({ccode}) * {stride}\n                            "
+            ccode = _einsum.print_cc(sym, axes_m, axes_n, axes_b)
+            if i > 0:
+                src += ' + '
+            src += f"({ccode}) * {stride}\n                            "
         src += ';'
-    
+
         src += """
+    TYPE *pc[TM, TN, TB] = C + offc;
+    
     // bounds-checking
     bool checkm[TM] = r""" + ''.join(map(str,axes_m)) + """ < matmul_m;
     bool checkn[TN] = r""" + ''.join(map(str,axes_n)) + """ < matmul_n;
@@ -235,7 +252,7 @@ __global__ void {name}(
     // write back
     TYPE c[TM, TN, TB] = acc;
 #if TZ == 1
-    *?(checkc)pc = c;
+    *pc = c;
 #else
     int *plock = locks + pid_mn + pid_b * get_num_programs(0);
     int *pcount = plock + 1024*1024;
@@ -245,7 +262,7 @@ __global__ void {name}(
     if(count == 0)
       *?(checkc)pc = c;
     else
-      *?(checkc)pc = c + *pc;
+      *?(checkc)pc = c + *?(checkc)pc;
     atomic_xchg(pcount, (count + 1) % (grid_z));
     atomic_xchg(plock, 0);
 #endif
@@ -311,6 +328,11 @@ __global__ void {name}(
     ## Einsum parsing
     ############################
 
+    def uniq(seq):
+        seen = set()
+        seen_add = seen.add
+        return [x for x in seq if not (x in seen or seen_add(x))]
+
     def parse_axes(expr_a, expr_b, expr_c, subscripted):
         is_index = lambda x: type(x) == sp.indexed.Indexed or str(x) in subscripted
         sym_a = [x for s in expr_a for x in s.free_symbols if not is_index(x)]
@@ -323,7 +345,7 @@ __global__ void {name}(
         if illegal:
             raise ValueError(f"einsum labels {illegal} ({expr_a}) "\
                              f"not present in {expr_b} or {expr_c}")
-        return list(set(batch)), list(set(outer)), list(set(inner))
+        return _einsum.uniq(batch), _einsum.uniq(outer), _einsum.uniq(inner)
 
 
     def replace_subscript(expr, arrays):
@@ -446,8 +468,7 @@ __global__ void {name}(
             div_m = 1
             self.args = [None, None, None,
                          _einsum.instance.locks, 
-                         alpha, M, N, K, div_m,
-                         None, None, None] +\
+                         alpha, M, N, K, div_m] +\
                          dim_m + dim_n +  dim_k + dim_b +\
                          stride_a + stride_b + stride_c +\
                          [delta_a, delta_b] +\
@@ -460,9 +481,6 @@ __global__ void {name}(
             self.pos_a = 0
             self.pos_b = 1
             self.pos_c = 2
-            self.pos_offa = 9
-            self.pos_offb = 10
-            self.pos_offc = 11
             # pre-processor macros
             TM = [x for x in [16, 32, 64, 128] if x <= M]
             TN = [x for x in [16, 32, 64, 128] if x <= N]
@@ -485,9 +503,6 @@ __global__ void {name}(
             self.args[self.pos_a] = a
             self.args[self.pos_b] = b
             self.args[self.pos_c] = c
-            self.args[self.pos_offa] = a.storage_offset()
-            self.args[self.pos_offb] = b.storage_offset()
-            self.args[self.pos_offc] = c.storage_offset()
             self.kernel(*self.args, bench=bench, **self.macros)
 
 
@@ -506,10 +521,16 @@ __global__ void {name}(
         # allocate output
         dtype = a.dtype
         c = triton.empty(shape_c, dtype=dtype)
+        key = (einsum, dtype, 
+               a.stride(), b.stride(), c.stride(), 
+               a.shape, b.shape, c.shape)
         # compile einsum instance
-        instance = _einsum.instance(einsum, dtype, 
-                                    a.stride(), b.stride(), c.stride(),
-                                    a.shape, b.shape, c.shape, arrays)
+        cache = _einsum.instance_cache
+        #if key not in cache:
+        cache[key] = _einsum.instance(einsum, dtype, 
+                                          a.stride(), b.stride(), c.stride(),
+                                          a.shape, b.shape, c.shape, arrays)
+        instance = cache[key]
         instance.run(a, b, c, bench)
         # save information in context
         ctx.flops = instance.flops

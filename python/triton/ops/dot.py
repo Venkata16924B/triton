@@ -6,46 +6,47 @@ class _dot(triton.function):
 void dot(TYPE * A __noalias __readonly __aligned(16),
          TYPE * B __noalias __readonly __aligned(16),
          TYPE * C,
+         float alpha,
          int M, int N, int K,
          int lda __multipleof(8),
          int ldb __multipleof(8),
          int ldc) {
-  // prologue
-  int ridx = get_program_id(0);
-  int ridy = get_program_id(1);
-  int rm[TM] = ridx * TM + 0 ... TM;
-  int rn[TN] = ridy * TN + 0 ... TN;
-  int rk[TK] = 0 ... TK;
+    // prologue
+      int ridx = get_program_id(0);
+      int ridy = get_program_id(1);
+      int rm[TM] = ridx * TM + 0 ... TM;
+      int rn[TN] = ridy * TN + 0 ... TN;
+      int rk[TK] = 0 ... TK;
 
-  // pointers to operands
-  TYPE* pa[SHAPE_A] = A + rk[BROADCAST_AK] * STRIDE_AK + rm[BROADCAST_AM] * STRIDE_AM;
-  TYPE* pb[SHAPE_B] = B + rk[BROADCAST_BK] * STRIDE_BK + rn[BROADCAST_BN] * STRIDE_BN;
+      // pointers to operands
+      TYPE* pa[SHAPE_A] = A + rk[BROADCAST_AK] * STRIDE_AK + rm[BROADCAST_AM] * STRIDE_AM;
+      TYPE* pb[SHAPE_B] = B + rk[BROADCAST_BK] * STRIDE_BK + rn[BROADCAST_BN] * STRIDE_BN;
 
-  // prefetches operands
-  bool checka[SHAPE_A] = rk[BROADCAST_AK] < K;
-  bool checkb[SHAPE_B] = rk[BROADCAST_BK] < K;
-  TYPE a[SHAPE_A] = checka ? *pa : 0;
-  TYPE b[SHAPE_B] = checkb ? *pb : 0;
+      // prefetches operands
+      bool checka[SHAPE_A] = rk[BROADCAST_AK] < K;
+      bool checkb[SHAPE_B] = rk[BROADCAST_BK] < K;
+      TYPE a[SHAPE_A] = checka ? *pa : 0;
+      TYPE b[SHAPE_B] = checkb ? *pb : 0;
 
-  // reduction loop
-  float c[TM, TN] = 0;
-  for(int k = K; k > TK; k -= TK){
-    c += USE_A @ USE_B;
-    bool checka[SHAPE_A] = k > TK;
-    bool checkb[SHAPE_B] = k > TK;
-    pa += TK * STRIDE_AK;
-    pb += TK * STRIDE_BK;
-    a = *pa;
-    b = *pb;
-  }
-  //c = c * alpha;
+      // reduction loop
+      float c[TM, TN] = 0;
+      for(int k = K; k > 0; k -= TK){
+        c += USE_A @ USE_B;
+        bool checka[SHAPE_A] = k > TK;
+        bool checkb[SHAPE_B] = k > TK;
+        pa += TK * STRIDE_AK;
+        pb += TK * STRIDE_BK;
+        a = *?(checka)pa;
+        b = *?(checkb)pb;
+      }
+      //c = c * alpha;
 
-  // epilogue
-  int rxm[TM] = get_program_id(0) * TM + 0 ... TM;
-  int rxn[TN] = get_program_id(1) * TN + 0 ... TN;
-  TYPE* pc[TM, TN] = C + rxm[:, newaxis] * ldc + rxn[newaxis, :];
-  bool checkc[TM, TN] = (rxm[:, newaxis] < M) && (rxn[newaxis, :] < N);
-  *?(checkc)pc = (TYPE[TM, TN])c;
+      // epilogue
+      int rxm[TM] = get_program_id(0) * TM + 0 ... TM;
+      int rxn[TN] = get_program_id(1) * TN + 0 ... TN;
+      TYPE* pc[TM, TN] = C + rxm[:, newaxis] * ldc + rxn[newaxis, :];
+      bool checkc[TM, TN] = (rxm[:, newaxis] < M) && (rxn[newaxis, :] < N);
+      *?(checkc)pc = (TYPE[TM, TN])c;
 }
 """
   kernel = triton.kernel(src, ['C'])
@@ -87,10 +88,10 @@ void dot(TYPE * A __noalias __readonly __aligned(16),
               'BROADCAST_BK': 'newaxis, :' if transpose_b else ':, newaxis',
               'BROADCAST_BN': ':, newaxis' if transpose_b else 'newaxis, :',
               'SHAPE_B'     : 'TN, TK'     if transpose_b else 'TK, TN'}
-    _dot.kernel(a, b, c, M, N, Ka, lda, ldb, ldc, 
+    _dot.kernel(a, b, c, 1., M, N, Ka, lda, ldb, ldc, 
                 grid, bench=bench,           
                 AT = transpose_a, BT = transpose_b, TYPE = dtype, 
-                TM = [64, 128], TN = [64, 128], TK = [8], **macros)
+                TM = [64], TN = [128], TK = [8], **macros)
     return c
 
   @staticmethod

@@ -84,6 +84,7 @@ public:
             analysis::align *alignment,
             analysis::allocation *alloc,
             target *tgt,
+            const std::string& name_suffix,
             unsigned num_warps);
 
   void visit_value(ir::value* v);
@@ -160,6 +161,8 @@ private:
   analysis::allocation *alloc_;
   Value *sh_mem_ptr_;
   Value *atom_ptr_;
+
+  std::string name_suffix_;
   unsigned num_warps_;
 
   std::set<ir::value*> seen_;

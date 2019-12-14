@@ -224,7 +224,6 @@ class kernel:
       libtriton.register_fn(op_id, self.src, opt)
       if self.fw_op is None:
         self.fw_op = _make_framework_op(self.src, self.outputs, self.tmp, opt)
-
     # benchmarking info
     bench = 0
     if 'bench' in kwargs:

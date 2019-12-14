@@ -230,7 +230,6 @@ layout_scanline_t::layout_scanline_t(size_t num_warps,
     mts[i] = clamp(num_threads, 1, shapes[i] / nts[i]);
     num_threads = num_threads / mts[i];
   }
-
   /* sanity check */
   unsigned effective_num_threads = 1;
   for(size_t d = 0; d < shapes.size(); d++)

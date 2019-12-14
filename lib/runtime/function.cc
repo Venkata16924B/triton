@@ -168,7 +168,6 @@ function::caller function::autotune(driver::stream* stream, const grid_fn_ty& gr
     for(auto it: opt_space_.defines)
       cpp.AddMacro(it.first, &opt.defines.at(it.first));
     cpp.Process(tokens);
-
     // parse
     Parser parser(tokens);
     parser.Parse();
@@ -187,7 +186,7 @@ function::caller function::autotune(driver::stream* stream, const grid_fn_ty& gr
     // benchmark
     ir::function *tmp = ir->get_function_list()[0];
     caller call(tmp, std::move(bin), opt);
-    double ts = tools::bench([&]() { call(stream, grid_fn(opt), args); }, stream, true);
+    double ts = tools::bench([&]() { call(stream, grid_fn(opt), args); }, stream);
     // save best
     if(ts < best_ts) {
       best_ts = ts;
@@ -219,7 +218,7 @@ std::unique_ptr<driver::module> function::make_bin(ir::module &module, driver::c
   codegen::transform::reassociate reassociate;
   codegen::transform::coalesce coalesce(&align, &layouts);
   codegen::transform::cts cts;
-  codegen::generator isel(&axes, &layouts, &align, &allocation, target.get(), opt.num_warps);
+  codegen::generator isel(&axes, &layouts, &align, &allocation, target.get(), "", opt.num_warps);
   // run passes
   dce.run(module);
   disassociate.run(module);

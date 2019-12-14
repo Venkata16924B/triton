@@ -508,7 +508,8 @@ void gen_torch_make_handles(std::ostream &os,
       os << "  " << to_c_ty(ty) << " arg_" << name << " = " << name << ";" << std::endl;
     else{
       os << "  CHECK_INPUT(" << name << ");" << std::endl;
-      os << "  drv::cu_buffer arg_" + name + "(ctx, " + name + ".storage().size(), (CUdeviceptr)" + name + ".storage().data(), false);" << std::endl;
+      os << "  drv::cu_buffer arg_" + name + "(ctx, " + name + ".storage().size(), "
+            " (CUdeviceptr)((char*)" + name + ".storage().data() + " + name + ".storage_offset() * " + name + ".itemsize()), false);" << std::endl;
     }
   }
 }
