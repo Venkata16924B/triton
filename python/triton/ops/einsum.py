@@ -217,7 +217,7 @@ __global__ void {name}(
         a = *?(checka)pa;
         b = *?(checkb)pb;
     }}
-    //acc = acc * alpha;
+    // acc = acc * alpha;
 
     // re-materialize ranges
 """
@@ -252,7 +252,7 @@ __global__ void {name}(
     // write back
     TYPE c[TM, TN, TB] = acc;
 #if TZ == 1
-    *pc = c;
+    *?(checkc)pc = c;
 #else
     int *plock = locks + pid_mn + pid_b * get_num_programs(0);
     int *pcount = plock + 1024*1024;
