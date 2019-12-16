@@ -184,9 +184,12 @@ __global__ void {name}(
 
         src += f"""
     
-    // prefetch
-    bool checka[TM, TK, TB] = {rk}[newaxis, :, newaxis] < matmul_k + off_k;
-    bool checkb[TK, TN, TB] = {rk}[:, newaxis, newaxis] < matmul_k + off_k;
+    // prefetch 
+    bool checkm[TM] = r""" + ''.join(map(str,axes_m)) + f""" < matmul_m;
+    bool checkn[TN] = r""" + ''.join(map(str,axes_n)) + f""" < matmul_n;
+    bool checkk[TK] = {rk} < matmul_k + off_k;
+    bool checka[TM, TK, TB] = checkm[:, newaxis, newaxis] && checkk[newaxis, :, newaxis];
+    bool checkb[TK, TN, TB] = checkk[:, newaxis, newaxis] && checkn[newaxis, :, newaxis];
     TYPE a[TM, TK, TB] = checka ? *pa : 0;
     TYPE b[TK, TN, TB] = checkb ? *pb : 0;
 
@@ -212,8 +215,9 @@ __global__ void {name}(
         pbdelta += TK;"""
 
         src += f"""
-        bool checka[TM, TK, TB] = k > TK;
-        bool checkb[TK, TN, TB] = k > TK;
+        checkk = k > TK;
+        checka = checkm[:, newaxis, newaxis] && checkk[newaxis, :, newaxis];
+        checkb = checkk[:, newaxis, newaxis] && checkn[newaxis, :, newaxis];
         a = *?(checka)pa;
         b = *?(checkb)pb;
     }}
@@ -244,8 +248,8 @@ __global__ void {name}(
     TYPE *pc[TM, TN, TB] = C + offc;
     
     // bounds-checking
-    bool checkm[TM] = r""" + ''.join(map(str,axes_m)) + """ < matmul_m;
-    bool checkn[TN] = r""" + ''.join(map(str,axes_n)) + """ < matmul_n;
+    checkm = r""" + ''.join(map(str,axes_m)) + """ < matmul_m;
+    checkn = r""" + ''.join(map(str,axes_n)) + """ < matmul_n;
     bool checkc[TM, TN, TB] = checkm[:, newaxis, newaxis] && 
                               checkn[newaxis, :, newaxis];
 
