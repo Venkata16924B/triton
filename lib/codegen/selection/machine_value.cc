@@ -15,10 +15,9 @@ void distributed_tile::init_indices() {
   std::vector<size_t> order(id.size());
   std::iota(order.begin(), order.end(), 0);
   auto cmp = [&](int x, int y) {
-    return order_[x] < order_[y];
+    return axes_[x].contiguous > axes_[y].contiguous;
   };
   std::sort(order.begin(), order.end(), cmp);
-
   // build
   size_t k = 0;
   while(true) {
@@ -127,10 +126,10 @@ void shared_tile::extract_constant(const indices_t &arg_idx, indices_t &non_cst_
 }
 
 
-Value* shared_tile::shared_offset(size_t stride, llvm::IRBuilder<> &builder, const shapes_t& shapes, const std::vector<int>& perm, const std::vector<int>& order, indices_t idx) {
+Value* shared_tile::shared_offset(llvm::IRBuilder<> &builder, const shapes_t& shapes, const std::vector<int>& perm, const std::vector<int>& order, indices_t idx) {
   // strides
   std::vector<Value*> strides(order.size());
-  strides[order[0]] = builder.getInt32(stride);
+  strides[order[0]] = builder.getInt32(1);
   for(size_t i = 1; i < idx.size(); i++)
     strides[order[i]] = builder.CreateMul(strides[order[i-1]], builder.getInt32(shapes[order[i-1]]));
   // result
@@ -150,8 +149,8 @@ shared_tile::shared_tile(Type *ty, const shapes_t &shapes, const std::vector<int
 }
 
 void shared_tile::set_value(indices_t idx, Value *value) {
-  Value *ptr = builder_.CreateAdd(ptr_, shared_offset(ty_->getPrimitiveSizeInBits()/8, builder_, shapes_, perm_, order_, idx));
-  unsigned addr_space = 3;
+  Value *ptr = builder_.CreateGEP(ptr_, shared_offset(builder_, shapes_, perm_, order_, idx));
+  unsigned addr_space = ptr->getType()->getPointerAddressSpace();
   ptr = builder_.CreateBitCast(ptr, value->getType()->getPointerTo(addr_space));
   builder_.CreateStore(value, ptr);
 }
@@ -175,34 +174,31 @@ Value* shared_tile::get_value(indices_t idx) {
     ty = IntegerType::get(ty->getContext(), 32);
     vector_size = vector_size / 2;
   }
-  Type *ptr_ty = ty->getPointerTo(3);
-  if(base_ptr == nullptr)
-    base_ptr = builder_.CreateAdd(ptr_, shared_offset(ty_->getPrimitiveSizeInBits()/8, builder_, shapes_, perm_, order_, non_cst_idx));
-  if(vector_size_ > 1){
-    Type *vec_ty = VectorType::get(ty, vector_size);
-    ptr_ty = PointerType::get(vec_ty, 3);
+  if(base_ptr == nullptr){
+//    BasicBlock* store = builder_.GetInsertBlock();
+//    if(!non_cst_idx.empty())
+//    if(isa<Instruction>(non_cst_idx.front())){
+//      builder_.SetInsertPoint((Instruction*)non_cst_idx.front());
+//    }
+    base_ptr = builder_.CreateGEP(ptr_, shared_offset(builder_, shapes_, perm_, order_, non_cst_idx));
+    if(vector_size_ > 1){
+      Type *vec_ty = VectorType::get(ty, vector_size);
+      Type *vec_ptr_ty = PointerType::get(vec_ty, base_ptr->getType()->getPointerAddressSpace());
+      base_ptr = builder_.CreateBitCast(base_ptr, vec_ptr_ty);
+    }
+//    builder_.SetInsertPoint(store);
   }
-
-  Value *offset = shared_offset(1, builder_, shapes_, perm_, order_, cst_idx);
+  Value *offset = shared_offset(builder_, shapes_, perm_, order_, cst_idx);
   Value *div = offset;
   if(vector_size_ > 1)
     div = builder_.CreateUDiv(offset, builder_.getInt32(vector_size_));
-  div = builder_.CreateMul(div, builder_.getInt32(vector_size * ty->getPrimitiveSizeInBits()/8));
-
-  Value *&packed = val_cache_[std::make_pair(base_ptr, div)].first;
-  std::vector<Value*> &unpacked = val_cache_[std::make_pair(base_ptr, div)].second;
-
-  if(packed == nullptr){
-    Value *ptr = builder_.CreateAdd(base_ptr, div);
-    packed = builder_.CreateLoad(builder_.CreateBitCast(ptr, ptr_ty));
-    for(int n = 0; n < vector_size_; n++)
-      unpacked.push_back(builder_.CreateExtractElement(packed, n));
+  Value *ptr = builder_.CreateGEP(base_ptr, div);
+  Value *result = builder_.CreateLoad(ptr);
+  if(return_vector_ == false && vector_size_ > 1) {
+    Value *rem = builder_.CreateURem(offset, builder_.getInt32(vector_size_));
+    result = builder_.CreateExtractElement(result, rem);
   }
-
-  if(return_vector_ || vector_size_ == 1)
-    return packed;
-  Value *rem = builder_.CreateURem(offset, builder_.getInt32(vector_size_));
-  return unpacked.at(dyn_cast<ConstantInt>(rem)->getZExtValue());
+  return result;
 }
 
 

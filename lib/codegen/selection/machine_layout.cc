@@ -90,18 +90,17 @@ machine_layout_shared_t::machine_layout_shared_t(Module *mod, Builder *builder, 
     else
       builder_->SetInsertPoint(&*parent->getFirstNonPHI());
     // create pointers
-    ptr_ = builder_->CreatePHI(builder->getInt32Ty(), 2);
+    ptr_ = builder_->CreatePHI(ptr_ty, 2);
+    pre_ptr_ = builder_->CreateGEP(sh_mem_ptr_, builder_->getInt32(alloc_->offset(layout_)));
+    pre_ptr_ = builder_->CreateBitCast(pre_ptr_, ptr_->getType());
     offset_ = builder_->CreatePHI(builder_->getInt32Ty(), 2);
-    pre_ptr_ = builder_->CreateAdd(builder_->CreateBitCast(sh_mem_ptr_, builder_->getInt32Ty()),
-                                   builder_->getInt32(alloc_->offset(layout_)));
-    next_ptr_ = builder_->CreateAdd(builder_->CreateBitCast(ptr_, builder_->getInt32Ty()),
-                                    offset_);
+    next_ptr_ = builder_->CreateGEP(ptr_, offset_, "next_ptr");
     builder_->SetInsertPoint(current);
   }
   else{
     size_t offset = alloc_->offset(layout_);
-    ptr_ = builder_->CreateAdd(builder_->CreateBitCast(sh_mem_ptr_, builder_->getInt32Ty()),
-                               builder_->getInt32(offset));
+    ptr_ = builder_->CreateGEP(sh_mem_ptr_, builder_->getInt32(offset));
+    ptr_ = builder_->CreateBitCast(ptr_, ptr_ty);
   }
 }
 

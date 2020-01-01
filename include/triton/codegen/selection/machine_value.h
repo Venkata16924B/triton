@@ -103,7 +103,7 @@ public:
   Value* get_offset() { return offset_; }
   const std::vector<int>& get_perm() { return perm_; }
   const std::vector<int>& get_order() { return order_; }
-  static Value* shared_offset(size_t stride, Builder& builder, const shapes_t& shapes, const std::vector<int>& perm, const std::vector<int>& order, indices_t idx);
+  static Value* shared_offset(Builder& builder, const shapes_t& shapes, const std::vector<int>& perm, const std::vector<int>& order, indices_t idx);
 
 private:
   Value *ptr_;
@@ -111,7 +111,6 @@ private:
   Builder &builder_;
   Value *offset_;
   std::map<indices_t, Value*> ptr_cache_;
-  std::map<std::pair<Value*, Value*>, std::pair<Value*, std::vector<Value*>>> val_cache_;
   unsigned vector_size_;
   std::vector<int> order_;
   std::vector<int> perm_;

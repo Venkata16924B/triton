@@ -73,7 +73,7 @@ class _einsum(triton.function):
                     lut_mode_a, lut_mode_b,
                     subscripted):
 
-        use_lut_a = True
+        use_lut_a = False
         use_lut_b = True
 
         src = f"""

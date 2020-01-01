@@ -11,8 +11,9 @@ configs = []
 
 # Matrix multiplication
 MNK = [
+    #   (128, 128, 128),
     #   (512, 512 ,512), 
-       (2048, 2048, 2048),
+    #   (2048, 2048, 2048),
     #   (15876, 512, 4608), 
     #   (8192, 8192, 8192),
 
@@ -78,7 +79,7 @@ NTHSE = [
 
 # Dense convolution
 NCHWKRS = [
-          # (1, 512, 128, 128, 512, 3, 3)
+           (1, 512, 128, 128, 512, 3, 3)
           ]
 for N, C, H, W, K, R, S in NCHWKRS:
     torch_fn = lambda a, b: torch.nn.functional.conv2d(a, b.permute(3, 0, 1, 2))
@@ -141,5 +142,7 @@ for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
         rc = torch.einsum(expr, a, b)
     # test and benchmark
     bench = triton.ctx_registry[tc].flops / triton.bench_registry[tc] * 1e-3
+    #print(tc)
+    #print(rc)
     diff = (tc - rc).abs().max() / rc.abs().max()
     print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f};          {diff:4.2f}')
