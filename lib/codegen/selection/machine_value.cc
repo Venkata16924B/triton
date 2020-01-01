@@ -126,7 +126,9 @@ void shared_tile::extract_constant(const indices_t &arg_idx, indices_t &non_cst_
 }
 
 
-Value* shared_tile::shared_offset(llvm::IRBuilder<> &builder, const shapes_t& shapes, const std::vector<int>& perm, const std::vector<int>& order, indices_t idx) {
+Value* shared_tile::shared_offset(llvm::IRBuilder<> &builder, const shapes_t& shapes,
+                                  const std::vector<int>& perm, const std::vector<int>& order,
+                                  indices_t idx) {
   // strides
   std::vector<Value*> strides(order.size());
   strides[order[0]] = builder.getInt32(1);

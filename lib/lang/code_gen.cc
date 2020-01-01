@@ -274,6 +274,15 @@ void Generator::VisitFuncCall(FuncCall* funcCall) {
     ir::value* ret = ret_;
     return set_ret(bld_->create_sqrt(ret));
   }
+  if(name == "calloc"){
+    VisitExpr(funcCall->Args()->at(0));
+    ir::value* ret = ret_;
+    ir::constant_int *size = dynamic_cast<ir::constant_int*>(ret);
+    assert(size);
+    ir::alloc_const* alloc = new ir::alloc_const(bld_->get_int8_ty(), size);
+    mod_->add_alloc(alloc);
+    return set_ret(alloc);
+  }
   //TODO: integrate this into conditionalop
   if(name == "select"){
     VisitExpr(funcCall->Args()->at(0));
@@ -562,6 +571,8 @@ ir::value* Generator::GenNumcastOp(ir::value*src, ir::type* dst_ty) {
   else if(src_scalar_ty->is_integer_ty() && dst_scalar_ty->is_integer_ty() &&
           src_scalar_ty->get_integer_bitwidth())
     return bld_->create_int_cast(src, dst_ty, dst_signed);
+  else if(src_scalar_ty->is_pointer_ty() && dst_scalar_ty->is_pointer_ty())
+    return bld_->create_cast(ir::BitCast, src, dst_ty);
   else{
     should_not_happen();
     return nullptr;
@@ -661,6 +672,8 @@ ir::type* Generator::GenIRFuncType(FuncType* type, ir::context& ctx) {
 ir::type* Generator::GenIRPointerType(PointerType* type, ir::context& ctx) {
   ir::type* ele_ty = GenIRType(type->Derived().GetPtr(), ctx);
   unsigned addr_space = 1;
+  if(type->Derived().IsConstantQualified())
+    addr_space = 4;
   return ir::pointer_type::get(ele_ty, addr_space);
 }
 

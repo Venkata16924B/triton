@@ -37,6 +37,7 @@ public:
   // Constants
   value *get_int32(unsigned val);
   // Types
+  type *get_void_ty();
   type *get_int1_ty();
   type *get_int8_ty();
   type *get_int16_ty();

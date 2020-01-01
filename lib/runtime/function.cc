@@ -184,6 +184,16 @@ function::caller function::autotune(driver::stream* stream, const grid_fn_ty& gr
     // kernel uses too much resources
     if(!bin)
       return;
+    // copy constants
+    std::unique_ptr<driver::buffer> buffer;
+    for(ir::alloc_const* alloc: ir->allocs()){
+      std::string name = alloc->get_name();
+      auto it = cst_.find(name);
+      if(it == cst_.end())
+        throw std::runtime_error("constant not set before execution");
+      buffer = bin->symbol(name.c_str());
+      stream->write(&*buffer, true, 0, it->second);
+    }
     // benchmark
     ir::function *tmp = ir->get_function_list()[0];
     caller call(tmp, std::move(bin), opt);
@@ -272,6 +282,7 @@ extern int get_program_id(int);
 extern int get_num_programs(int);
 extern float sqrtf(float);
 extern int select(bool, int, int);
+extern char __constant__ * calloc(int);
 )";
 }
 
@@ -311,6 +322,10 @@ void function::operator()(const std::vector<arg>& args, const grid_fn_ty& grid_f
 
 void function::operator()(const std::vector<arg>& args, const grid_t& grid, driver::stream *stream) {
   return this->operator()(args, [&grid](const options_t&){ return grid; }, stream);
+}
+
+void function::set_cst(const std::string& name, void* data, size_t n_bytes) {
+   cst_[name] = std::vector<char>((char*)data, (char*)data + n_bytes);
 }
 
 }

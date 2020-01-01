@@ -2,14 +2,14 @@ namespace src {
 
     const char *dot =
 R"(
-void dot(TYPE * A __noalias __readonly __aligned(16),
-         TYPE * B __noalias __readonly __aligned(16),
-         TYPE * C,
-         float alpha,
-         int M, int N, int K,
-         int lda __multipleof(8),
-         int ldb __multipleof(8),
-         int ldc) {
+__global__ void dot(TYPE * A __noalias __readonly __aligned(16),
+                    TYPE * B __noalias __readonly __aligned(16),
+                    TYPE * C,
+                    float alpha,
+                    int M, int N, int K,
+                    int lda __multipleof(8),
+                    int ldb __multipleof(8),
+                    int ldc) {
       // prologue
       int ridx = get_program_id(0);
       int ridy = get_program_id(1);

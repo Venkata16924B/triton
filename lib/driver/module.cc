@@ -180,6 +180,11 @@ host_module::host_module(driver::context * context, std::unique_ptr<llvm::Module
   hst_->engine = builder.create();
 }
 
+std::unique_ptr<buffer> host_module::symbol(const char *name) const {
+  throw std::runtime_error("not implemented");
+}
+
+
 /* ------------------------ */
 //         OpenCL           //
 /* ------------------------ */
@@ -211,6 +216,9 @@ ocl_module::ocl_module(driver::context * context, std::unique_ptr<llvm::Module> 
 //  }
 }
 
+std::unique_ptr<buffer> ocl_module::symbol(const char *name) const {
+  throw std::runtime_error("not implemented");
+}
 
 /* ------------------------ */
 //         CUDA             //
@@ -266,11 +274,12 @@ cu_module::cu_module(driver::context * context, std::string const & source) : mo
   }
 }
 
-cu_buffer* cu_module::symbol(const char *name) const{
+std::unique_ptr<buffer> cu_module::symbol(const char *name) const{
   CUdeviceptr handle;
   size_t size;
   dispatch::cuModuleGetGlobal_v2(&handle, &size, *cu_, name);
-  return new cu_buffer(ctx_, size, handle, false);
+  std::unique_ptr<buffer> res(new cu_buffer(ctx_, size, handle, false));
+  return std::move(res);
 }
 
 
