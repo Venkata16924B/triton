@@ -335,7 +335,7 @@ void generator::visit_unmasked_load_inst(ir::unmasked_load_inst* x) {
 }
 
 void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
-  bool predicated = true;
+  bool predicated = false;
   // find vector size
   ir::value *ptr = x->get_pointer_operand();
   size_t ld = layouts_->get(ptr)->order[0];
@@ -366,7 +366,7 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
           offset = " + " + std::to_string(cst->getValue().getSExtValue()*2*vector_size);
         // Inline asm type
         Type *ret_ty = ptr->getType()->getPointerElementType()->getScalarType();
-        size_t num_rep = 32 / ret_ty->getScalarSizeInBits();
+        size_t num_rep = 1;
         if(num_rep > 1)
           ret_ty = VectorType::get(ret_ty, num_rep);
         if(vector_size > 1)
@@ -376,7 +376,7 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
         std::string asm_str = "@$0 ld.global.nc";
         if(vector_size > 1)
           asm_str += ".v" + std::to_string(vector_size);
-        asm_str += ".b32 ";
+        asm_str += ".b16 ";
         if(vector_size > 1)
           asm_str += "{";
         for(size_t i = 0; i < vector_size; i++){
@@ -395,7 +395,7 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
           asm_str += "@!$0 mov";
           if(vector_size > 1)
             asm_str += ".v" + std::to_string(vector_size);
-          asm_str += ".b32 ";
+          asm_str += ".b16 ";
           if(vector_size > 1)
             asm_str += "{";
           for(size_t i = 0; i < vector_size; i++){
@@ -418,9 +418,10 @@ void generator::visit_masked_load_inst(ir::masked_load_inst* x) {
         }
 
         bool is_float = ptr->getType()->getPointerElementType()->getScalarType()->isFloatTy();
+        bool is_half = ptr->getType()->getPointerElementType()->getScalarType()->isHalfTy();
         std::string constraints = "b";
         for(size_t i = 0; i < vector_size; i++)
-          constraints += ",=" + std::string(is_float ? "f" : "r");
+          constraints += ",=" + std::string(is_float ? "f" : (is_half ? "h" : "r"));
         constraints += ",l";
         InlineAsm *iasm = InlineAsm::get(ty, asm_str, constraints, true);
         // store result
@@ -1156,7 +1157,7 @@ void generator::finalize_shared_layout(analysis::layout_shared_t *shared) {
       }
       else {
         unsigned num_bytes = shared->ty->get_primitive_size_in_bits() / 8;
-        offset->addIncoming(builder_->getInt32(4 * shared->size / (2*num_bytes)), llvm_inc_block);
+        offset->addIncoming(builder_->getInt32(num_bytes * shared->size / (2*num_bytes)), llvm_inc_block);
       }
       ptr->addIncoming(inc_shared->get_pointer(), llvm_inc_block);
     }

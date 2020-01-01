@@ -73,6 +73,9 @@ class _einsum(triton.function):
                     lut_mode_a, lut_mode_b,
                     subscripted):
 
+        use_lut_a = True
+        use_lut_b = True
+
         src = f"""
 __global__ void {name}(
               TYPE * A __noalias __readonly __aligned(16)
@@ -140,7 +143,6 @@ __global__ void {name}(
                 src += _einsum.unpack_cc(tile, axes, 'r', False)
 
         src += """    
-
     // initialize pointers to A
     int offa[TM, TK, TB] = """
         for i, sym in enumerate(expr_a):
@@ -153,7 +155,7 @@ __global__ void {name}(
 
         src += """
     TYPE *pa[TM, TK, TB] = A + offa;"""
-
+       
         if not lut_mode_a == _einsum.LUT_MODE.SCALAR:
             src += f"""
     // initialize pointers to A look-up table
@@ -198,13 +200,34 @@ __global__ void {name}(
     for(int k = matmul_k; k > 0; k -= TK) {{
         acc += a @ b;"""
 
-        if lut_mode_a == _einsum.LUT_MODE.SCALAR:
-            src += """
-        pa += stride_a_inner;"""
+        if not use_lut_a or not use_lut_b:
+            src += f"""
+        {rk} += TK;
+"""
+            src += _einsum.unpack_cc(tile, axes_k, 'r', True)
+            
+
+        if use_lut_a:
+            if lut_mode_a == _einsum.LUT_MODE.SCALAR:
+                src += """
+            pa += stride_a_inner;"""
+            else:
+                src += """
+            pa += (*padelta)[newaxis, :, newaxis];
+            padelta += TK;"""
         else:
             src += """
-        pa += (*padelta)[newaxis, :, newaxis];
-        padelta += TK;"""
+            offa = """
+            for i, sym in enumerate(expr_a):
+                ccode = _einsum.print_cc(sym, axes_m, axes_k, axes_b)
+                stride = f'stride_a_{i}' if i < len(expr_a) - 1 else '1'
+                if i > 0:
+                    src += ' + '
+                src += f"({ccode}) * {stride}\n                            "
+            src += """;
+            TYPE *pa[TM, TK, TB] = A + offa;"""
+
+
 
         if lut_mode_b == _einsum.LUT_MODE.SCALAR:
             src += """
@@ -462,6 +485,7 @@ __global__ void {name}(
             N = reduce(mul, dim_n, 1)
             K = reduce(mul, dim_k, 1)
             B = reduce(mul, dim_b, 1)
+            #print(B, M, N, K)
             stride_a = list(stride_a[:-1])
             stride_b = list(stride_b[:-1])
             stride_c = list(stride_c[:-1])

@@ -177,7 +177,7 @@ Value* shared_tile::get_value(indices_t idx) {
   }
   Type *ptr_ty = ty->getPointerTo(3);
   if(base_ptr == nullptr)
-    base_ptr = builder_.CreateAdd(ptr_, shared_offset(ty->getPrimitiveSizeInBits()/8, builder_, shapes_, perm_, order_, non_cst_idx));
+    base_ptr = builder_.CreateAdd(ptr_, shared_offset(ty_->getPrimitiveSizeInBits()/8, builder_, shapes_, perm_, order_, non_cst_idx));
   if(vector_size_ > 1){
     Type *vec_ty = VectorType::get(ty, vector_size);
     ptr_ty = PointerType::get(vec_ty, 3);

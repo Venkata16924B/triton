@@ -31,7 +31,7 @@ void dot(TYPE * A __noalias __readonly __aligned(16),
 
       // reduction loop
       float c[TM, TN] = 0;
-      for(int k = K; k > TK; k -= TK){
+      for(int k = K; k > 0; k -= TK){
         c += USEA @ USEB;
         bool checka[SHAPE_A] = k > TK;
         bool checkb[SHAPE_B] = k > TK;
@@ -45,7 +45,7 @@ void dot(TYPE * A __noalias __readonly __aligned(16),
       // epilogue
       int rxm[TM] = get_program_id(0) * TM + 0 ... TM;
       int rxn[TN] = get_program_id(1) * TN + 0 ... TN;
-      int offc[TM, TN] = rxm[:, newaxis] * ldc + rxn[newaxis, :];
+      int offc[TM, TN] = rxm[:, newaxis] + rxn[newaxis, :] * ldc;
       TYPE* pc[TM, TN] = C + offc;
       bool checkc[TM, TN] = (rxm[:, newaxis] < M) && (rxn[newaxis, :] < N);
       *?(checkc)pc = (TYPE[TM, TN])c;
