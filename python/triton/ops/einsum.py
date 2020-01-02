@@ -208,8 +208,11 @@ __global__ void {name}(
     bool checka[TM, TK, TB] = checkm[:, newaxis, newaxis] && checkk[newaxis, :, newaxis];
     bool checkb[TK, TN, TB] = checkk[:, newaxis, newaxis] && checkn[newaxis, :, newaxis];
     TYPE a[TM, TK, TB] = checka ? *pa : 0;
-    TYPE b[TK, TN, TB] = checkb ? *pb : 0;
-
+    TYPE b[TK, TN, TB] = checkb ? *pb : 0;"""
+        if use_lut_a and lut_mode_a != _einsum.LUT_MODE.SCALAR:
+            src += """
+    int incda[TM, TK, TB] = (*padelta)[newaxis, :, newaxis];"""
+        src += f"""
     // accumulate
     float acc[TM, TN, TB] = 0;
     for(int k = matmul_k; k > 0; k -= TK) {{
@@ -228,8 +231,9 @@ __global__ void {name}(
             pa += stride_a_inner;"""
             else:
                 src += """
-            pa += (*padelta)[newaxis, :, newaxis];
-            padelta += TK;"""
+            pa += incda;
+            padelta += TK;
+            incda = (*padelta)[newaxis, :, newaxis];"""
         else:
             src += """
             offa = """
@@ -330,8 +334,8 @@ __global__ void {name}(
     def lut_mode(delta):
         if np.min(delta) == np.max(delta):
             return _einsum.LUT_MODE.SCALAR
-        if delta.size < 4096:
-            return _einsum.LUT_MODE.CONSTANT
+        #if delta.size < 4096:
+        #    return _einsum.LUT_MODE.CONSTANT
         return _einsum.LUT_MODE.DRAM
 
     def symbolic_delta(symbols, axes):
