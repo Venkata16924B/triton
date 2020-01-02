@@ -200,6 +200,10 @@ class kernel:
     self.src = src
     self.outputs = outputs
     self.tmp = tmp
+    self.cst = dict()
+
+  def set_constant(self, name, value):
+    self.cst[name] = value
 
   def __call__(self, *args, **kwargs):
     # create a new framework op when defines are different
@@ -222,6 +226,8 @@ class kernel:
       self.fw_id[key] = op_id
       # register function
       libtriton.register_fn(op_id, self.src, opt)
+      for name, value in self.cst.items():
+        libtriton.register_cst(op_id, name, value)
       if self.fw_op is None:
         self.fw_op = _make_framework_op(self.src, self.outputs, self.tmp, opt)
     # benchmarking info

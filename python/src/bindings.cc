@@ -1,4 +1,5 @@
 ﻿#include <pybind11/pybind11.h>
+#include <pybind11/buffer_info.h>
 #include <pybind11/stl.h>
 #include <pybind11/functional.h>
 #include <string>
@@ -46,6 +47,11 @@ void register_fn(size_t id,
 
 void delete_fn(size_t id) {
   id_fn_map.erase(id);
+}
+
+void register_cst(size_t id, const std::string& name, pybind11::buffer& data) {
+  pybind11::buffer_info info = data.request();
+  id_fn_map[id]->set_cst(name, info.ptr, info.size*info.itemsize);
 }
 
 void cleanup() {
@@ -626,6 +632,7 @@ PYBIND11_MODULE(libtriton, m) {
     m.def("register_grid", &register_grid);
     m.def("delete_grid", &delete_grid);
     m.def("register_fn", &register_fn);
+    m.def("register_cst", &register_cst);
     m.def("delete_fn", &delete_fn);
     m.def("make_op_id", &make_op_id);
     m.def("make_scalar_id", &make_scalar_id);

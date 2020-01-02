@@ -1143,9 +1143,6 @@ void generator::visit(ir::module &src, llvm::Module &dst) {
                          nullptr, "__atom_ptr", nullptr, GlobalVariable::NotThreadLocal, 3);
     atom_ptr_ = builder_->CreateBitCast(_atom_ptr, PointerType::get(int_32_ty, 3));
   }
-  // allocate constant memory
-  for(ir::alloc_const *x: src.allocs())
-    visit_alloc_const(x);
   // visit functions
   for(ir::function *fn: src.get_function_list())
     visit_function(fn);

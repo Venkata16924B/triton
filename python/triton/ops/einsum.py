@@ -71,12 +71,23 @@ class _einsum(triton.function):
                     axes_m, axes_n, axes_k, axes_b,
                     multipleof_a, multipleof_b, multipleof_c,
                     lut_mode_a, lut_mode_b,
+                    delta_a, delta_b,
                     subscripted):
 
-        use_lut_a = False
+        use_lut_a = True
         use_lut_b = True
 
-        src = f"""
+        src = ""
+
+        if lut_mode_a == _einsum.LUT_MODE.CONSTANT:
+            src += f"""
+char __constant__* AD = calloc({4*len(delta_a)});"""
+        if lut_mode_b == _einsum.LUT_MODE.CONSTANT:
+            src += f"""
+char __constant__* BD = calloc({4*len(delta_b)});"""
+
+
+        src += f"""
 __global__ void {name}(
               TYPE * A __noalias __readonly __aligned(16)
             , TYPE * B __noalias __readonly __aligned(16)
@@ -99,12 +110,12 @@ __global__ void {name}(
             src += "\n            "
         if lut_mode_a == _einsum.LUT_MODE.SCALAR:
             src += f", int stride_a_inner __multipleof({multipleof_a})"
-        else:
+        elif lut_mode_a == _einsum.LUT_MODE.DRAM:
             src += ", int* AD"
         src += "\n            "
         if lut_mode_b == _einsum.LUT_MODE.SCALAR:
             src += f", int stride_b_inner __multipleof({multipleof_b})"
-        else:
+        elif lut_mode_b == _einsum.LUT_MODE.DRAM:
             src += ", int* BD"
         for ptr in subscripted:
             src += f", int* {ptr}"
@@ -157,10 +168,12 @@ __global__ void {name}(
     TYPE *pa[TM, TK, TB] = A + offa;"""
        
         if not lut_mode_a == _einsum.LUT_MODE.SCALAR:
+            spec = '__constant__' if lut_mode_a == _einsum.LUT_MODE.CONSTANT else ''
+            cast = '(int __constant__*)' if lut_mode_a == _einsum.LUT_MODE.CONSTANT else ''
             src += f"""
     // initialize pointers to A look-up table
     int offadelta[TK] = off_k + 0 ... TK;
-    int *padelta[TK]  = AD  + offadelta;"""
+    int {spec} *padelta[TK]  = {cast}AD  + offadelta;"""
     
         src += """
 
@@ -179,6 +192,8 @@ __global__ void {name}(
 
 
         if not lut_mode_b == _einsum.LUT_MODE.SCALAR:
+            spec = '__constant__' if lut_mode_b == _einsum.LUT_MODE.CONSTANT else ''
+            cast = '(int __constant__*)' if lut_mode_b == _einsum.LUT_MODE.CONSTANT else ''
             src += f"""
     // initialize pointers to B look-up table
     int offbdelta[TK] = off_k + 0 ... TK;
@@ -296,7 +311,12 @@ __global__ void {name}(
 }
 """
 
-        return triton.kernel(src, ['C'])
+        ret = triton.kernel(src, ['C'])
+        if lut_mode_a == _einsum.LUT_MODE.CONSTANT:
+            ret.set_constant('AD', delta_a)
+        if lut_mode_b == _einsum.LUT_MODE.CONSTANT:
+            ret.set_constant('BD', delta_b)
+        return ret
 
     ############################
     ## Look-up Table
@@ -471,7 +491,9 @@ __global__ void {name}(
                                                         sym_a, sym_b, sym_c, 
                                                         axes_m, axes_n, axes_k, axes_b, 
                                                         stride_a_multiple, stride_b_multiple, stride_c_multiple,
-                                                        lut_mode_a, lut_mode_b, subscripted)
+                                                        lut_mode_a, lut_mode_b,
+                                                        delta_a, delta_b,
+                                                        subscripted)
             self.kernel = cache[name]
             # Initialize locks
             if _einsum.instance.locks is None:
@@ -485,7 +507,6 @@ __global__ void {name}(
             N = reduce(mul, dim_n, 1)
             K = reduce(mul, dim_k, 1)
             B = reduce(mul, dim_b, 1)
-            #print(B, M, N, K)
             stride_a = list(stride_a[:-1])
             stride_b = list(stride_b[:-1])
             stride_c = list(stride_c[:-1])
@@ -498,9 +519,12 @@ __global__ void {name}(
                          _einsum.instance.locks, 
                          alpha, M, N, K, div_m] +\
                          dim_m + dim_n +  dim_k + dim_b +\
-                         stride_a + stride_b + stride_c +\
-                         [delta_a, delta_b] +\
-                         arrays
+                         stride_a + stride_b + stride_c
+            if lut_mode_a != _einsum.LUT_MODE.CONSTANT:
+                self.args += [delta_a]
+            if lut_mode_b != _einsum.LUT_MODE.CONSTANT:
+                self.args += [delta_b]
+            self.args += arrays
             self.args += [lambda opt: [triton.cdiv(M, opt.d('TM')) * 
                                        triton.cdiv(N, opt.d('TN')),
                                        triton.cdiv(B, opt.d('TB')),

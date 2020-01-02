@@ -14,7 +14,7 @@ MNK = [
     #   (128, 128, 128),
     #   (512, 512 ,512), 
     #   (2048, 2048, 2048),
-    #   (15876, 512, 4608), 
+       (15876, 512, 1152), 
     #   (8192, 8192, 8192),
 
     #    (64, 64, 64000),
@@ -79,7 +79,7 @@ NTHSE = [
 
 # Dense convolution
 NCHWKRS = [
-           (1, 512, 128, 128, 512, 3, 3)
+           (1, 128, 128, 128, 512, 3, 3)
           ]
 for N, C, H, W, K, R, S in NCHWKRS:
     torch_fn = lambda a, b: torch.nn.functional.conv2d(a, b.permute(3, 0, 1, 2))
@@ -128,8 +128,8 @@ for N, C, H, W, K, R, S in NCHWKRS:
 torch.set_num_threads(1)
 for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
     # initialize input tensors
-    a = np.random.randn(*a_shape).astype(np.float16)
-    b = np.random.randn(*b_shape).astype(np.float16)
+    a = np.random.randn(*a_shape).astype(np.float32)
+    b = np.random.randn(*b_shape).astype(np.float32)
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
     ta = triton.ops._einsum.pad(a, [16,16,16,16])
