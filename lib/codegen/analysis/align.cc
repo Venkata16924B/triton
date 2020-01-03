@@ -501,6 +501,7 @@ void align::populate(ir::value *v) {
   populate_is_constant(v);
   populate_starting_multiple(v);
   populate_max_contiguous(v);
+
 }
 
 void align::run(ir::module &mod) {

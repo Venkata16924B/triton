@@ -149,8 +149,11 @@ layout_t::layout_t(layout_type_t _type,
     extract_io_use(v, ptr);
   order.resize(axes.size());
   std::iota(order.begin(), order.end(), 0);
-  for(ir::value *v: ptr){
-    auto max_contiguous = align->contiguous(v);
+  auto largest = std::max_element(ptr.begin(), ptr.end(), [&](ir::value *x, ir::value *y){
+    return x->get_type()->get_tile_rank() < y->get_type()->get_tile_rank();
+  });
+  if(*largest){
+    auto max_contiguous = align->contiguous(*largest);
     std::sort(order.begin(), order.end(), [&](unsigned a, unsigned b) {
       return max_contiguous[a] > max_contiguous[b];
     });
@@ -197,6 +200,7 @@ layout_hmma_884_t::layout_hmma_884_t(size_t num_warps,
   unsigned effective_num_warps = 1;
   for(size_t d = 0; d < shapes.size(); d++)
     effective_num_warps *= wpt[d];
+
   if(num_warps != effective_num_warps)
     throw std::runtime_error("cannot create a kernel with this amount of warps");
 }
@@ -312,12 +316,16 @@ layout_shared_t::layout_shared_t(const layout_t *arg,
     col.push_back(s);
     row.push_back(s);
   }
+
+
   bool is_nonhmma_dot_a = dot_a && !hmma_dot_a;
   bool is_nonhmma_dot_b = dot_b && !hmma_dot_b;
   if(is_nonhmma_dot_a)
     order = is_trans(dot_a) ? row : col;
-  if(is_nonhmma_dot_b)
+  else if(is_nonhmma_dot_b)
     order = is_trans(dot_b) ? col : row;
+//  else
+//    order = row;
 
   // padding
   pad = 0;

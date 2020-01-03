@@ -14,7 +14,7 @@ MNK = [
     #   (128, 128, 128),
     #   (512, 512 ,512), 
     #   (2048, 2048, 2048),
-       (15876, 512, 1152), 
+       (12600, 512, 3456), 
     #   (8192, 8192, 8192),
 
     #    (64, 64, 64000),
@@ -77,9 +77,22 @@ NTHSE = [
 # for N, T, H, S, E in NTHSE:
 #     configs += [([N, H, T, E], [H, E, S], [N, T, H, S], None, 'nhte,hes->nths', dict())]
 
-# Dense convolution
+# 1D Dense convolution
+NCHKR = [
+            (1, 1152, 12602, 512, 3)
+          ]
+for N, C, H, K, R in NCHKR:
+    torch_fn = lambda a, b: torch.nn.functional.conv1d(a, b.permute(2, 0, 1))
+    configs += [([N, C, H], 
+                 [C, R, K], 
+                 [N, K, H - R + 1], 
+                 torch_fn, 
+                 'nc(h+r),crk->nkh',
+                 dict())]
+
+# 2D Dense convolution
 NCHWKRS = [
-           (1, 128, 128, 128, 512, 3, 3)
+           (1, 384, 422, 32, 512, 3, 3)
           ]
 for N, C, H, W, K, R, S in NCHWKRS:
     torch_fn = lambda a, b: torch.nn.functional.conv2d(a, b.permute(3, 0, 1, 2))
@@ -89,6 +102,20 @@ for N, C, H, W, K, R, S in NCHWKRS:
                  torch_fn, 
                  'nc(h+r)(w+s),crsk->nkhw',
                  dict())]
+
+# 3D Dense Convolution
+NCDHWKTRS = [
+           (1, 128, 16, 32, 32, 512, 3, 3, 3)
+          ]
+for N, C, D, H, W, K, T, R, S in NCDHWKTRS:
+    torch_fn = lambda a, b: torch.nn.functional.conv3d(a, b.permute(4, 0, 1, 2, 3))
+    configs += [([N, C, D, H, W], 
+                 [C, T, R, S, K], 
+                 [N, K, D - T + 1, H - R + 1, W - R + 1], 
+                 torch_fn, 
+                 'nc(d+t)(h+r)(w+s),ctrsk->nkdhw',
+                 dict())]
+
 
 # Shift convolution
 shift_cuda = torch.utils.cpp_extension.load(
@@ -117,7 +144,7 @@ for N, C, H, W, K, R, S in NCHWKRS:
         a = shift.apply(a, shift_torch)
         b = b.reshape(K, C, 1, 1)
         return torch.nn.functional.conv2d(a, b)
-    # configs += [([N, C, H, W], 
+    #configs += [([N, C, H, W], 
     #              [K, C], 
     #              [N, K, H, W], 
     #              shift_conv, 
@@ -128,8 +155,8 @@ for N, C, H, W, K, R, S in NCHWKRS:
 torch.set_num_threads(1)
 for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
     # initialize input tensors
-    a = np.random.randn(*a_shape).astype(np.float32)
-    b = np.random.randn(*b_shape).astype(np.float32)
+    a = np.random.randn(*a_shape).astype(np.float16)
+    b = np.random.randn(*b_shape).astype(np.float16)
     a = torch.from_numpy(a).cuda()
     b = torch.from_numpy(b).cuda()
     ta = triton.ops._einsum.pad(a, [16,16,16,16])

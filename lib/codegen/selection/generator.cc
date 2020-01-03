@@ -1132,7 +1132,7 @@ void generator::visit(ir::module &src, llvm::Module &dst) {
   if(unsigned alloc_size = alloc_->allocated_size()){
     Type *int_8_ty = Type::getInt8Ty(*ctx_);
     Type *int_32_ty = Type::getInt32Ty(*ctx_);
-    ArrayType *array_ty = ArrayType::get(int_8_ty, alloc_size);
+    ArrayType *array_ty = ArrayType::get(int_32_ty, alloc_size/4);
     Type *ptr_ty = PointerType::get(int_8_ty, 3);
     GlobalVariable *sh_mem_array =
       new GlobalVariable(*mod_, array_ty, false, GlobalVariable::ExternalLinkage,
