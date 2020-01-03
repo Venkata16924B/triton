@@ -14,7 +14,7 @@ MNK = [
     #   (128, 128, 128),
     #   (512, 512 ,512), 
     #   (2048, 2048, 2048),
-    #   (12600, 512, 3456), 
+    (12600, 512, 3456), 
     #   (8192, 8192, 8192),
 
     #    (64, 64, 64000),
@@ -145,13 +145,13 @@ for N, C, H, W, K, R, S in NCHWKRS:
     shift_torch = torch.from_numpy(shift_torch).cuda()
     def shift_conv(a, b):
         a = shift.apply(a, shift_torch)
-        b = b.reshape(K, C, 1, 1)
+        b = b.permute(1, 0).reshape(K, C, 1, 1)
         return torch.nn.functional.conv2d(a, b)
     configs += [([N, C, H, W], 
-                  [K, C], 
+                  [C, K], 
                   [N, K, H, W], 
                   shift_conv, 
-                  'nc(h+sh[c])(w+sw[c]),kc->nkhw',
+                  'nc(h + sh[c])(w + sw[c]),ck->nkhw',
                   {'sh': shift_h, 'sw': shift_w})]
 
 # Benchmark
