@@ -14,7 +14,7 @@ MNK = [
     #   (128, 128, 128),
     #   (512, 512 ,512), 
     #   (2048, 2048, 2048),
-       (12600, 512, 3456), 
+    #   (12600, 512, 3456), 
     #   (8192, 8192, 8192),
 
     #    (64, 64, 64000),
@@ -46,7 +46,7 @@ NTHSE = [
         #  (16, 512, 1, 32, 64), 
         #  (16, 512, 1, 128, 128),
         #  (16, 512, 1, 256, 256),
-         (16, 512, 1, 256, 512),
+        # (16, 512, 1, 256, 512),
         #  (16, 512, 8, 64, 64), 
         #  (16, 512, 8, 128, 128),
         #  (16, 512, 8, 256, 256),
@@ -79,7 +79,7 @@ NTHSE = [
 
 # 1D Dense convolution
 NCHKR = [
-            (1, 1152, 12602, 512, 3)
+         #   (1, 1152, 12602, 512, 3)
           ]
 for N, C, H, K, R in NCHKR:
     torch_fn = lambda a, b: torch.nn.functional.conv1d(a, b.permute(2, 0, 1))
@@ -97,15 +97,15 @@ NCHWKRS = [
 for N, C, H, W, K, R, S in NCHWKRS:
     torch_fn = lambda a, b: torch.nn.functional.conv2d(a, b.permute(3, 0, 1, 2))
     configs += [([N, C, H, W], 
-                 [C, R, S, K], 
-                 [N, K, H - R + 1, W - R + 1], 
-                 torch_fn, 
-                 'nc(h+r)(w+s),crsk->nkhw',
-                 dict())]
+                  [C, R, S, K], 
+                  [N, K, H - R + 1, W - R + 1], 
+                  torch_fn, 
+                  'nc(h+r)(w+s),crsk->nkhw',
+                  dict())]
 
 # 3D Dense Convolution
 NCDHWKTRS = [
-           (1, 128, 16, 32, 32, 512, 3, 3, 3)
+         #  (1, 128, 16, 32, 32, 512, 3, 3, 3)
           ]
 for N, C, D, H, W, K, T, R, S in NCDHWKTRS:
     torch_fn = lambda a, b: torch.nn.functional.conv3d(a, b.permute(4, 0, 1, 2, 3))
@@ -135,21 +135,24 @@ class shift(torch.autograd.Function):
 
         return grad_output, None
 
+NCHWKRS = [
+           (1, 384*9, 420, 30, 512, 3, 3)
+          ]
 for N, C, H, W, K, R, S in NCHWKRS:
-    shift_h = np.random.randint(3, size=C, dtype=np.int32) - 1
-    shift_w = np.random.randint(3, size=C, dtype=np.int32) - 1
-    shift_torch =  np.column_stack((shift_h*-1, shift_w*-1))
+    shift_h = np.random.randint(R, size=C, dtype=np.int32) - R//2
+    shift_w = np.random.randint(S, size=C, dtype=np.int32) - S//2
+    shift_torch =  np.column_stack((shift_w*-1, shift_h*-1))
     shift_torch = torch.from_numpy(shift_torch).cuda()
     def shift_conv(a, b):
         a = shift.apply(a, shift_torch)
         b = b.reshape(K, C, 1, 1)
         return torch.nn.functional.conv2d(a, b)
-    #configs += [([N, C, H, W], 
-    #              [K, C], 
-    #              [N, K, H, W], 
-    #              shift_conv, 
-    #              'nc(h+sh[c])(w+sw[c]),kc->nkhw',
-    #              {'sh': shift_h, 'sw': shift_w})]
+    configs += [([N, C, H, W], 
+                  [K, C], 
+                  [N, K, H, W], 
+                  shift_conv, 
+                  'nc(h+sh[c])(w+sw[c]),kc->nkhw',
+                  {'sh': shift_h, 'sw': shift_w})]
 
 # Benchmark
 torch.set_num_threads(1)
@@ -161,7 +164,7 @@ for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
     b = torch.from_numpy(b).cuda()
     ta = triton.ops._einsum.pad(a, [16,16,16,16])
     # triton output
-    tc = triton.ops.einsum(expr, a, b, c_shape, arrays = arrays, bench = True)
+    tc = triton.ops.einsum(expr, ta, b, c_shape, arrays = arrays, bench = True)
     # reference output
     if torch_fn:
         rc = torch_fn(a, b)
@@ -169,7 +172,5 @@ for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
         rc = torch.einsum(expr, a, b)
     # test and benchmark
     bench = triton.ctx_registry[tc].flops / triton.bench_registry[tc] * 1e-3
-    #print(tc)
-    #print(rc)
     diff = (tc - rc).abs().max() / rc.abs().max()
     print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f};          {diff:4.2f}')

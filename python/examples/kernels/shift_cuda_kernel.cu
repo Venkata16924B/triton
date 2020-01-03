@@ -13,20 +13,20 @@ __global__ void shift_cuda_forward_kernel(
     scalar_t* __restrict__ output,
     const int32_t B,
     const int32_t C,
-    const int32_t W,
-    const int32_t H) {
+    const int32_t H,
+    const int32_t W) {
   const int32_t idx = blockIdx.x * blockDim.x + threadIdx.x;
-  const int32_t size = B*C*W*H;
+  const int32_t size = B*C*H*W;
   
-  const int32_t CWH = C*W*H;
-  const int32_t WH = W*H;
-  const int32_t b = idx / CWH;
-  const int32_t c = (idx - b*CWH) / WH;
-  const int32_t w = (idx - b*CWH - c*WH) / W;
-  const int32_t h = idx - b*CWH - c*WH - w*H;
+  const int32_t CHW = C*H*W;
+  const int32_t HW = H*W;
+  const int32_t b = idx / CHW;
+  const int32_t c = (idx - b*CHW) / HW;
+  const int32_t h = (idx - b*CHW - c*HW) / W;
+  const int32_t w = idx - b*CHW - c*HW - h*W;
   const int32_t target_w = w + shift[2*c];
   const int32_t target_h = h + shift[2*c + 1];
-  const int32_t target_idx = b*CWH + c*WH + target_w*W + target_h;
+  const int32_t target_idx = b*CHW + c*HW + target_h*W + target_w;
   if (idx < size && target_w >= 0 && target_w < W && target_h >= 0 && target_h < H) {
       output[target_idx] = input[idx];
   }
@@ -63,8 +63,8 @@ at::Tensor shift_cuda_forward(
     const at::Tensor shift) {
   const auto B = input.size(0);
   const auto C = input.size(1);
-  const auto W = input.size(2);
-  const auto H = input.size(3);
+  const auto H = input.size(2);
+  const auto W = input.size(3);
   const auto size = B*C*W*H;
   const int threads = 1024;
   const int blocks = (size + threads - 1) / threads;
@@ -77,8 +77,8 @@ at::Tensor shift_cuda_forward(
         output.data<scalar_t>(),
         B,
         C,
-        W,
-        H);
+        H,
+        W);
   }));
 
   return output;
@@ -89,8 +89,8 @@ at::Tensor shift_cuda_backward(
     const at::Tensor shift) {
   const auto B = grad_input.size(0);
   const auto C = grad_input.size(1);
-  const auto W = grad_input.size(2);
-  const auto H = grad_input.size(3);
+  const auto H = grad_input.size(2);
+  const auto W = grad_input.size(3);
   const auto size = B*C*W*H;
   const int threads = 1024;
   const int blocks = (size + threads - 1) / threads;
@@ -103,8 +103,8 @@ at::Tensor shift_cuda_backward(
         shift.data<int32_t>(),
         B,
         C,
-        W,
-        H);
+        H,
+        W);
   }));
 
   return grad_output;
