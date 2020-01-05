@@ -14,7 +14,7 @@ MNK = [
     #   (128, 128, 128),
     #   (512, 512 ,512), 
     #   (2048, 2048, 2048),
-       (12600, 512, 3456), 
+    #   (12600, 512, 3456), 
     #   (8192, 8192, 8192),
 
     #    (64, 64, 64000),
@@ -44,21 +44,21 @@ for M, N, K in MNK:
 # Relative attention
 NTHSE = [
         #  (16, 512, 1, 32, 64), 
-        #  (16, 512, 1, 128, 128),
+        (16, 512, 1, 128, 128),
         #  (16, 512, 1, 256, 256),
-         (16, 512, 1, 256, 512),
+        #  (16, 512, 1, 256, 512),
         #  (16, 512, 8, 64, 64), 
         #  (16, 512, 8, 128, 128),
         #  (16, 512, 8, 256, 256),
         #  (16, 512, 8, 256, 512),
 
-        #  (64, 1024, 1, 64, 64), 
+        (64, 1024, 1, 64, 64), 
         #  (64, 1024, 1, 128, 128),
         #  (64, 1024, 1, 256, 256),
         #  (64, 1024, 1, 256, 512),
         #  (64, 1024, 8, 64, 64), 
         #  (64, 1024, 8, 128, 128),
-        #  (64, 1024, 8, 256, 256),
+        (64, 1024, 8, 256, 256),
         #  (64, 1024, 8, 256, 512),
 
         #  (128, 1024, 1, 64, 64), 
@@ -68,10 +68,10 @@ NTHSE = [
         #  (128, 1024, 8, 64, 64), 
         #  (128, 1024, 8, 128, 128),
         #  (128, 1024, 8, 256, 256),
-        #  (128, 1024, 8, 256, 512)
+        (128, 1024, 8, 256, 512)
         ]
-# for N, T, H, S, E in NTHSE:
-#     configs += [([N, T, H, S], [H, E, S], [N, H, T, E], None, 'nths,hes->nhte', dict())]
+#for N, T, H, S, E in NTHSE:
+#    configs += [([N, T, H, S], [H, E, S], [N, H, T, E], None, 'nths,hes->nhte', dict())]
 # for N, T, H, S, E in NTHSE:
 #     configs += [([N, H, T, E], [N, T, H, S], [H, E, S], None, 'nhte,nths->hes', dict())]
 # for N, T, H, S, E in NTHSE:
@@ -79,8 +79,8 @@ NTHSE = [
 
 # 1D Dense convolution
 NCHKR = [
-            (1, 1152, 12602, 512, 3)
-          ]
+        #    (1, 1152, 12602, 512, 3)
+        ]
 for N, C, H, K, R in NCHKR:
     torch_fn = lambda a, b: torch.nn.functional.conv1d(a, b.permute(2, 0, 1))
     configs += [([N, C, H], 
@@ -92,7 +92,10 @@ for N, C, H, K, R in NCHKR:
 
 # 2D Dense convolution
 NCHWKRS = [
-           (1, 384, 422, 32, 512, 3, 3)
+          # (8, 64, 128, 128, 128, 3, 3),
+          # (8, 128, 64, 64, 256, 3, 3),
+          # (8, 256, 32, 32, 512, 3, 3),
+          # (8, 512, 16, 16, 1024, 3, 3)
           ]
 for N, C, H, W, K, R, S in NCHWKRS:
     torch_fn = lambda a, b: torch.nn.functional.conv2d(a, b.permute(3, 0, 1, 2))
@@ -105,7 +108,10 @@ for N, C, H, W, K, R, S in NCHWKRS:
 
 # 3D Dense Convolution
 NCDHWKTRS = [
-           (1, 128, 16, 32, 32, 512, 3, 3, 3)
+           #(8, 32, 27, 100, 100, 64, 3, 3, 3),
+           #(8, 64, 23, 48, 48, 256, 3, 3, 3),
+           #(8, 256, 19, 22, 22, 640, 3, 3, 3),
+           #(8, 640, 15, 36, 36, 384, 3, 3, 3)
           ]
 for N, C, D, H, W, K, T, R, S in NCDHWKTRS:
     torch_fn = lambda a, b: torch.nn.functional.conv3d(a, b.permute(4, 0, 1, 2, 3))
@@ -144,22 +150,21 @@ for N, C, H, W, K, R, S in NCHWKRS:
         a = shift.apply(a, shift_torch)
         b = b.reshape(K, C, 1, 1)
         return torch.nn.functional.conv2d(a, b)
-    #configs += [([N, C, H, W], 
-    #              [K, C], 
-    #              [N, K, H, W], 
-    #              shift_conv, 
-    #              'nc(h+sh[c])(w+sw[c]),kc->nkhw',
-    #              {'sh': shift_h, 'sw': shift_w})]
+    configs += [([N, C, H, W], 
+                  [K, C], 
+                  [N, K, H, W], 
+                  shift_conv, 
+                  'nc(h+sh[c])(w+sw[c]),kc->nkhw',
+                  {'sh': shift_h, 'sw': shift_w})]
 
 # Benchmark
 torch.set_num_threads(1)
 for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
+    dtype = torch.cuda.HalfTensor
     # initialize input tensors
-    a = np.random.randn(*a_shape).astype(np.float16)
-    b = np.random.randn(*b_shape).astype(np.float16)
-    a = torch.from_numpy(a).cuda()
-    b = torch.from_numpy(b).cuda()
-    ta = triton.ops._einsum.pad(a, [16,16,16,16])
+    a = torch.rand(*a_shape).type(dtype).cuda()
+    b = torch.rand(*b_shape).type(dtype).cuda()
+    # a = triton.ops._einsum.pad(a, [16,16,16,16])
     # triton output
     tc = triton.ops.einsum(expr, a, b, c_shape, arrays = arrays, bench = True)
     # reference output
@@ -167,9 +172,15 @@ for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
         rc = torch_fn(a, b)
     else:
         rc = torch.einsum(expr, a, b)
+    # performance relative to equivalent matrix multiplication
+    ctx = triton.ctx_registry[tc]
+    B, M, N, K = ctx.matmul_B, ctx.matmul_M, ctx.matmul_N, ctx.matmul_K
+    a = torch.rand(B, M, K).type(dtype).cuda()
+    b = torch.rand(B, K, N).type(dtype).cuda()
+    tmmc = triton.ops.einsum('bmk,bkn->bmn', a, b, [B, M, N], bench = True)
     # test and benchmark
-    bench = triton.ctx_registry[tc].flops / triton.bench_registry[tc] * 1e-3
-    #print(tc)
-    #print(rc)
+    bench = 2. * B * M * N * K / triton.bench_registry[tc] * 1e-3
+    print(B, M, N, K)
+    ratio = triton.bench_registry[tmmc] / triton.bench_registry[tc]
     diff = (tc - rc).abs().max() / rc.abs().max()
-    print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f};          {diff:4.2f}')
+    print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f} ({ratio:4.2f});          {diff:4.2f}')

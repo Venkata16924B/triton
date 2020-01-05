@@ -552,6 +552,11 @@ __global__ void {name}(
             self.sym_a = sym_a
             self.sym_b = sym_b
             self.sym_c = sym_c
+            # save equivalent mat-mul dimensions
+            self.matmul_B = B
+            self.matmul_M = M
+            self.matmul_N = N
+            self.matmul_K = K
                     
         def run(self, a, b, c, bench):
             self.args[self.pos_a] = a
@@ -591,6 +596,10 @@ __global__ void {name}(
         ctx.sym_a = instance.sym_a
         ctx.sym_b = instance.sym_b
         ctx.sym_c = instance.sym_c
+        ctx.matmul_B = instance.matmul_B
+        ctx.matmul_M = instance.matmul_M
+        ctx.matmul_N = instance.matmul_N
+        ctx.matmul_K = instance.matmul_K
         ctx.bench = bench
         ctx.save_for_backward(a, b)
         return c
