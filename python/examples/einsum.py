@@ -100,11 +100,11 @@ NCHWKRS = [
 for N, C, H, W, K, R, S in NCHWKRS:
     torch_fn = lambda a, b: torch.nn.functional.conv2d(a, b.permute(3, 0, 1, 2))
     configs += [([N, C, H, W], 
-                 [C, R, S, K], 
-                 [N, K, H - R + 1, W - R + 1], 
-                 torch_fn, 
-                 'nc(h+r)(w+s),crsk->nkhw',
-                 dict())]
+                  [C, R, S, K], 
+                  [N, K, H - R + 1, W - R + 1], 
+                  torch_fn, 
+                  'nc(h+r)(w+s),crsk->nkhw',
+                  dict())]
 
 # 3D Dense Convolution
 NCDHWKTRS = [
@@ -141,30 +141,33 @@ class shift(torch.autograd.Function):
 
         return grad_output, None
 
+NCHWKRS = [
+           (1, 384*9, 420, 30, 512, 3, 3)
+          ]
 for N, C, H, W, K, R, S in NCHWKRS:
-    shift_h = np.random.randint(3, size=C, dtype=np.int32) - 1
-    shift_w = np.random.randint(3, size=C, dtype=np.int32) - 1
-    shift_torch =  np.column_stack((shift_h*-1, shift_w*-1))
+    shift_h = np.random.randint(R, size=C, dtype=np.int32) - R//2
+    shift_w = np.random.randint(S, size=C, dtype=np.int32) - S//2
+    shift_torch =  np.column_stack((shift_w*-1, shift_h*-1))
     shift_torch = torch.from_numpy(shift_torch).cuda()
     def shift_conv(a, b):
         a = shift.apply(a, shift_torch)
-        b = b.reshape(K, C, 1, 1)
+        b = b.permute(1, 0).reshape(K, C, 1, 1)
         return torch.nn.functional.conv2d(a, b)
     configs += [([N, C, H, W], 
-                  [K, C], 
+                  [C, K], 
                   [N, K, H, W], 
                   shift_conv, 
-                  'nc(h+sh[c])(w+sw[c]),kc->nkhw',
+                  'nc(h + sh[c])(w + sw[c]),ck->nkhw',
                   {'sh': shift_h, 'sw': shift_w})]
 
 # Benchmark
 torch.set_num_threads(1)
 for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
-    dtype = torch.cuda.HalfTensor
+    dtype = torch.cuda.FloatTensor
     # initialize input tensors
     a = torch.rand(*a_shape).type(dtype).cuda()
     b = torch.rand(*b_shape).type(dtype).cuda()
-    # a = triton.ops._einsum.pad(a, [16,16,16,16])
+    # ta = triton.ops._einsum.pad(a, [16,16,16,16])
     # triton output
     tc = triton.ops.einsum(expr, a, b, c_shape, arrays = arrays, bench = True)
     # reference output
@@ -180,7 +183,6 @@ for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
     tmmc = triton.ops.einsum('bmk,bkn->bmn', a, b, [B, M, N], bench = True)
     # test and benchmark
     bench = 2. * B * M * N * K / triton.bench_registry[tc] * 1e-3
-    print(B, M, N, K)
     ratio = triton.bench_registry[tmmc] / triton.bench_registry[tc]
     diff = (tc - rc).abs().max() / rc.abs().max()
     print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f} ({ratio:4.2f});          {diff:4.2f}')
