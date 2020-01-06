@@ -14,8 +14,8 @@ MNK = [
     #   (128, 128, 128),
     #   (512, 512 ,512), 
     #   (2048, 2048, 2048),
-    #   (12600, 512, 3456), 
-    #   (8192, 8192, 8192),
+      (127008, 768, 576), 
+    #  (8192, 8192, 8192),
 
     #    (64, 64, 64000),
     #    (64, 64, 128000),
@@ -92,10 +92,10 @@ for N, C, H, K, R in NCHKR:
 
 # 2D Dense convolution
 NCHWKRS = [
-          # (8, 64, 128, 128, 128, 3, 3),
-          # (8, 128, 64, 64, 256, 3, 3),
-          # (8, 256, 32, 32, 512, 3, 3),
-          # (8, 512, 16, 16, 1024, 3, 3)
+          #(8, 64, 128, 128, 768, 3, 3),
+          #(8, 128, 64, 64, 256, 3, 3),
+          #(8, 256, 32, 32, 512, 3, 3),
+          #(8, 512, 32, 32, 1024, 3, 3)
           ]
 for N, C, H, W, K, R, S in NCHWKRS:
     torch_fn = lambda a, b: torch.nn.functional.conv2d(a, b.permute(3, 0, 1, 2))
@@ -142,16 +142,21 @@ class shift(torch.autograd.Function):
         return grad_output, None
 
 NCHWKRS = [
-           (1, 384*9, 420, 30, 512, 3, 3)
+          #(8, 64, 128, 128, 128, 3, 3),
+          #(8, 128, 64, 64, 256, 3, 3),
+          #(8, 256, 32, 32, 512, 3, 3),
+          #(8, 512, 32, 32, 1024, 3, 3)
           ]
 for N, C, H, W, K, R, S in NCHWKRS:
     shift_h = np.random.randint(R, size=C, dtype=np.int32) - R//2
     shift_w = np.random.randint(S, size=C, dtype=np.int32) - S//2
-    shift_torch =  np.column_stack((shift_w*-1, shift_h*-1))
-    shift_torch = torch.from_numpy(shift_torch).cuda()
-    def shift_conv(a, b):
+    def shift_conv(a, b, **kwargs):
+        shift_h, shift_w = kwargs['sh'], kwargs['sw']
+        shift_torch =  np.column_stack((shift_w*-1, shift_h*-1))
+        shift_torch = torch.from_numpy(shift_torch).cuda()
         a = shift.apply(a, shift_torch)
-        b = b.permute(1, 0).reshape(K, C, 1, 1)
+        b = b.permute(1, 0)
+        b = b.reshape(b.shape[0], b.shape[1], 1, 1)
         return torch.nn.functional.conv2d(a, b)
     configs += [([N, C, H, W], 
                   [C, K], 
@@ -163,26 +168,27 @@ for N, C, H, W, K, R, S in NCHWKRS:
 # Benchmark
 torch.set_num_threads(1)
 for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
-    dtype = torch.cuda.FloatTensor
+    dtype = torch.cuda.HalfTensor
     # initialize input tensors
     a = torch.rand(*a_shape).type(dtype).cuda()
     b = torch.rand(*b_shape).type(dtype).cuda()
-    # ta = triton.ops._einsum.pad(a, [16,16,16,16])
     # triton output
+    #ta = triton.ops._einsum.pad(a, [4,4,4,4])
     tc = triton.ops.einsum(expr, a, b, c_shape, arrays = arrays, bench = True)
     # reference output
     if torch_fn:
-        rc = torch_fn(a, b)
+        rc = torch_fn(a, b, **arrays)
     else:
         rc = torch.einsum(expr, a, b)
     # performance relative to equivalent matrix multiplication
     ctx = triton.ctx_registry[tc]
     B, M, N, K = ctx.matmul_B, ctx.matmul_M, ctx.matmul_N, ctx.matmul_K
-    a = torch.rand(B, M, K).type(dtype).cuda()
-    b = torch.rand(B, K, N).type(dtype).cuda()
-    tmmc = triton.ops.einsum('bmk,bkn->bmn', a, b, [B, M, N], bench = True)
+    # a = torch.rand(B, M, K).type(dtype).cuda()
+    # b = torch.rand(B, K, N).type(dtype).cuda()
+    # tmmc = triton.ops.einsum('bmk,bkn->bmn', a, b, [B, M, N], bench = True)
+    # ratio = triton.bench_registry[tmmc] / triton.bench_registry[tc]
+    ratio = 0
     # test and benchmark
     bench = 2. * B * M * N * K / triton.bench_registry[tc] * 1e-3
-    ratio = triton.bench_registry[tmmc] / triton.bench_registry[tc]
     diff = (tc - rc).abs().max() / rc.abs().max()
     print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f} ({ratio:4.2f});          {diff:4.2f}')

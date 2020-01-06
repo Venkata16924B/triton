@@ -13,6 +13,11 @@ __global__ void dot(TYPE * A __noalias __readonly __aligned(16),
       // prologue
       int ridx = get_program_id(0);
       int ridy = get_program_id(1);
+      int gridx = M / TM;
+      int gridy = N / TN;
+      int rid = ridx + ridy * gridx;
+      ridx = rid / gridy;
+      ridy = rid % gridy;
       int rm[TM] = ridx * TM + 0 ... TM;
       int rn[TN] = ridy * TN + 0 ... TN;
       int rk[TK] = 0 ... TK;

@@ -250,6 +250,7 @@ std::unique_ptr<driver::module> function::make_bin(ir::module &module, driver::c
   dce.run(module);
   align.run(module);
   axes.run(module);
+//  ir::print(module, std::cout);
   layouts.run(module);
   liveness.run(module);
   allocation.run(module);

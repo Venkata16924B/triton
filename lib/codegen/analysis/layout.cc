@@ -326,7 +326,6 @@ layout_shared_t::layout_shared_t(const layout_t *arg,
     order = is_trans(dot_b) ? col : row;
 //  else
 //    order = row;
-
   // padding
   pad = 0;
   if(hmma_dot_a){

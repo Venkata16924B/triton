@@ -122,6 +122,7 @@ __global__ void {name}(
         src += """) {
 
     // re-order outer program ids
+    int grid_m = (matmul_m + TM - 1) / TM;
     int grid_n = (matmul_n + TN - 1) / TN;
     int pid_mn = get_program_id(0) / div_m;
     int pid_n = pid_mn % grid_n;
@@ -260,7 +261,7 @@ __global__ void {name}(
         a = *?(checka)pa;
         b = *?(checkb)pb;
     }}
-    // acc = acc * alpha;
+    acc = acc * alpha;
 
     // re-materialize ranges
 """
@@ -312,6 +313,7 @@ __global__ void {name}(
 }
 """
 
+        print(src)
         ret = triton.kernel(src, ['C'])
         if use_lut_a and lut_mode_a == _einsum.LUT_MODE.CONSTANT:
             ret.set_constant('AD', delta_a)
@@ -545,7 +547,7 @@ __global__ void {name}(
             TZ = [x for x in [1, 2, 4, 8, 16, 32] \
                     if x < MAX_GZ and x*MIN_GM*MIN_GN*MIN_GB < 256]
             TZ = [1] if not TZ else [TZ[-1], TZ[-1]*2]
-            #TM, TN, TB, TZ = [32], [32], [1], [1]
+            TM, TN, TB, TZ = [128], [128], [1], [1]
             self.macros = {  'TM': TM, 'TN': TN, 'TB': TB, 'TK': TK, 'TZ': TZ, 'TYPE': dtype }
             self.dtype = dtype
             self.flops = 2 * B * M * N * K
