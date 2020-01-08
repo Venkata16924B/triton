@@ -421,6 +421,49 @@ void generator::visit_masked_store_inst(ir::masked_store_inst* st) {
   distributed_tile* scalars = (distributed_tile*)tmap_.at(st->get_value_operand());
   ir::value *mask = st->get_mask_operand();
   distributed_tile* preds = (distributed_tile*)tmap_.at(mask);
+
+//  std::map<unsigned, Value*> packets;
+//  ir::value *arg = st->get_value_operand();
+//  int vector_size = 2;
+//  for_each(arg, [&](indices_t idx){
+//    distributed_tile* in = (distributed_tile*)tmap_.at(arg);
+//    unsigned linear = in->get_linear_index(idx);
+//    unsigned id = linear / vector_size;
+//    Value *in_value = in->get_value(idx);
+//    if(linear % vector_size == 0)
+//      packets[id] = UndefValue::get(VectorType::get(in_value->getType(), vector_size));
+//    packets[id] = builder_->CreateInsertElement(packets.at(id), in_value, linear % vector_size);
+//  });
+
+//  for_each(arg, [&](indices_t idx){
+//    distributed_tile* in = (distributed_tile*)tmap_.at(arg);
+//    unsigned linear = in->get_linear_index(idx);
+//    unsigned id = linear / vector_size;
+//    if(linear % vector_size == 0){
+//      Value *scalar = packets[id];
+//      Value *ptr = ptrs->get_value(idx);
+//      Value *pred = preds->get_value(idx);
+
+//      Type *scaty = scalar->getType();
+//      unsigned nbits = scaty->getScalarSizeInBits();
+//      unsigned nbytes = nbits / 8;
+//      std::string suffix = nbits == 32 ? "f" : "h";
+//      std::string offset = "";
+//      if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
+//      if(gep->getNumIndices() == 1)
+//      if(ConstantInt *cst = dyn_cast<ConstantInt>(gep->idx_begin())){
+//        offset = " + " + std::to_string(cst->getValue().getSExtValue()*nbytes);
+//        ptr = gep->getPointerOperand();
+//      }
+//      ptr = builder_->CreateBitCast(ptr, scalar->getType()->getPointerTo(1));
+//      FunctionType *ty = FunctionType::get(builder_->getVoidTy(), {pred->getType(), ptr->getType(), builder_->getHalfTy(), builder_->getHalfTy()}, false);
+//      std::string asm_str = "@$0 st.global.v2.b" + std::to_string(nbits) + " [$1" + offset + "], {$2, $3};";
+//      InlineAsm *iasm = InlineAsm::get(ty, asm_str, "b,l," + suffix + "," + suffix, true);
+//      builder_->CreateCall(iasm, {pred, ptr, builder_->CreateExtractElement(scalar, builder_->getInt32(0)), builder_->CreateExtractElement(scalar, builder_->getInt32(1))});
+//    }
+//  });
+
+
   ptrs->for_each([&](indices_t idx){
     Value *scalar = scalars->get_value(idx);
     Value *ptr = ptrs->get_value(idx);
@@ -873,7 +916,6 @@ void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
                                    ->create(rc);
   // pointer to temporary shared memory
   Type *ty = llvm_type(rc->get_type()->get_scalar_ty(), *ctx_);
-  Value *ptr = builder_->CreateBitCast(sh_mem_ptr_, PointerType::get(ty, 3));
   // layouts
   const analysis::layout_t* in_layout = layouts_->get(op);
   const analysis::layout_t* out_layout = layouts_->get(rc);
@@ -881,44 +923,46 @@ void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
   distributed_tile *in_dt = (distributed_tile*)(tmap_.at(op));
   distributed_tile *out_dt = (distributed_tile*)(tmap_.at(rc));
   // num threads
-  int in_num_threads_0 = 4*in_layout->wpt[0]*in_layout->fpw[0];
-  int in_num_threads_1 = 4*in_layout->wpt[1]*in_layout->fpw[1];
-  int out_num_threads_0 = out_layout->mts[0];
-  int out_num_threads_1 = out_layout->mts[1];
-  // number of rows per thread
-  int in_rpt = shapes[0] / in_num_threads_0;
-  int out_rpt = shapes[0] / out_num_threads_0;
-  int in_cpt = shapes[1] / in_num_threads_1;
-  int out_cpt = shapes[1] / out_num_threads_1;
-  // copy to shared
+  // number of row/col per thread for input layout
+  int wmma_0 = 8*in_layout->wpt[0]*in_layout->fpw[0];
+  int wmma_1 = 8*in_layout->wpt[1]*in_layout->fpw[1];
+  int in_rpt = 2 * shapes[0] / wmma_0;
+  int in_cpt = shapes[1] / wmma_1;
+  // number of row/col per thread for output layout
+  int out_rpt = shapes[0] / out_layout->mts[0];
+  int out_cpt = shapes[1] / out_layout->mts[1];
+  // re-coalesce
   int out_start = 0;
   int in_start = 0;
-  for(int rr = 0; rr < in_cpt; rr++){
-    in_dt->for_each([&](indices_t idx){
-      Value *lane = axes_.at(a_axes_->get(rc, 1)).values[1];
-      lane = builder_->CreateAdd(builder_->CreateUDiv(lane, builder_->getInt32(2)),
-                                 builder_->CreateURem(lane, builder_->getInt32(2)));
-      indices_t write_idx = {idx[0], lane};
-      Value *write_offset = shared_tile::shared_offset(*builder_, tmp->get_shapes(),
-                                                       tmp->get_perm(),
-                                                       tmp->get_order(), write_idx);
-      Value *write_ptr = builder_->CreateGEP(ptr, write_offset);
-      builder_->CreateStore(in_dt->get_value(idx), write_ptr);
-      in_start++;
-    }, in_start, in_start + in_rpt);
+  Value *ptr = builder_->CreateBitCast(sh_mem_ptr_, PointerType::get(ty, 3));
+  std::vector<Value*> ptrs(4);
+  for(int in_cc = 0; in_cc < 4; in_cc++)
+    ptrs[in_cc] = builder_->CreateGEP(ptr, builder_->CreateMul(
+                                            builder_->getInt32(tmp->get_shapes()[0]),
+                                            axes_.at(a_axes_->get(op, 1)).values[in_cc]));
 
+  for(int in_c = 0; in_c < in_cpt; in_c++){
+    // write to shared
+    tgt_->add_barrier(mod_, *builder_);
+    for(int in_cc = 0; in_cc < 4; in_cc++){
+      in_dt->for_each([&](indices_t idx){
+        Value *write_ptr = builder_->CreateGEP(ptrs[in_cc], idx[0]);
+        builder_->CreateStore(in_dt->get_value(idx), write_ptr);
+        in_start++;
+      }, in_start, in_start + in_rpt);
+    }
+    tgt_->add_barrier(mod_, *builder_);
     // load from shared
-    for(int rrr = 0; rrr < out_cpt / in_cpt; rrr++){
+    for(int out_c = 0; out_c < out_cpt / in_cpt; out_c++){
       out_dt->for_each([&](indices_t idx){
-        Value *lane = axes_.at(a_axes_->get(rc, 1)).thread_id;
-        lane = builder_->CreateAdd(lane, builder_->CreateMul(builder_->getInt32(rrr),
-                                                             builder_->getInt32(out_layout->mts[1])));
+        Value *lane = axes_.at(a_axes_->get(rc, 1)).values[out_c];
         indices_t read_idx = {idx[0], lane};
         out_dt->set_value(idx, tmp->get_value(read_idx));
         out_start++;
       }, out_start, out_start + out_rpt);
     }
   }
+  tgt_->add_barrier(mod_, *builder_);
 
 }
 

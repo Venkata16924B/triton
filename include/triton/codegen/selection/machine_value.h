@@ -136,7 +136,7 @@ public:
   indices_t get_ordered_indices(unsigned id);
   void for_each(std::function<void(indices_t)> fn, int start = 0, int end = -1);
   const distributed_axis &axis(unsigned dim) { return axes_.at(dim); }
-
+  void set_vector_size(size_t v) { vector_size_ = v;}
 private:
   axes_t axes_;
   std::vector<int> order_;
