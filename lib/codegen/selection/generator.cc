@@ -885,56 +885,38 @@ void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
   int in_num_threads_1 = 4*in_layout->wpt[1]*in_layout->fpw[1];
   int out_num_threads_0 = out_layout->mts[0];
   int out_num_threads_1 = out_layout->mts[1];
-  // pack sizes
-  int ld = in_layout->order[0];
-  int nld = in_layout->order[1];
-  int in_pack_size = shapes[ld] / (4*in_layout->wpt[ld]*in_layout->fpw[ld]);
+  // number of rows per thread
+  int in_rpt = shapes[0] / in_num_threads_0;
+  int out_rpt = shapes[0] / out_num_threads_0;
+  int in_cpt = shapes[1] / in_num_threads_1;
+  int out_cpt = shapes[1] / out_num_threads_1;
   // copy to shared
   int out_start = 0;
   int in_start = 0;
-  for(int r = 0; r < 2; r++)
-  for(int rr = 0; rr < in_layout->fpw[0]; rr++){
+  for(int rr = 0; rr < in_cpt; rr++){
     in_dt->for_each([&](indices_t idx){
-      // shared memory
-      indices_t write_idx(idx.size());
-      for(size_t k = 0; k < write_idx.size(); k++){
-        if(k == ld)
-          write_idx[k] = idx[k];
-        else{
-          Value *lane = axes_.at(a_axes_->get(rc, k)).values[0];
-          lane = builder_->CreateAdd(builder_->CreateUDiv(lane, builder_->getInt32(2)),
-                                     builder_->CreateURem(lane, builder_->getInt32(2)));
-          write_idx[k] = lane;
-        }
-      }
+      Value *lane = axes_.at(a_axes_->get(rc, 1)).values[1];
+      lane = builder_->CreateAdd(builder_->CreateUDiv(lane, builder_->getInt32(2)),
+                                 builder_->CreateURem(lane, builder_->getInt32(2)));
+      indices_t write_idx = {idx[0], lane};
       Value *write_offset = shared_tile::shared_offset(*builder_, tmp->get_shapes(),
                                                        tmp->get_perm(),
                                                        tmp->get_order(), write_idx);
       Value *write_ptr = builder_->CreateGEP(ptr, write_offset);
       builder_->CreateStore(in_dt->get_value(idx), write_ptr);
       in_start++;
-    }, in_start, in_start + in_pack_size);
-    // load from shared
+    }, in_start, in_start + in_rpt);
 
-    int out_pack_size = shapes[ld] / out_layout->mts[ld];
-    int out_outer_size = shapes[nld] / out_layout->mts[nld];
-    int out_repeat_size = out_outer_size / (2 * in_layout->fpw[0]);
-    for(int rrr = 0; rrr < out_repeat_size; rrr++){
+    // load from shared
+    for(int rrr = 0; rrr < out_cpt / in_cpt; rrr++){
       out_dt->for_each([&](indices_t idx){
-        indices_t read_idx(idx.size());
-        for(size_t k = 0; k < read_idx.size(); k++){
-          if(k==ld)
-            read_idx[k] = idx[k];
-          else{
-            Value *lane = axes_.at(a_axes_->get(rc, k)).thread_id;
-            lane = builder_->CreateAdd(lane, builder_->CreateMul(builder_->getInt32(rrr),
-                                                                 builder_->getInt32(out_layout->mts[k])));
-            read_idx[k] = lane;
-          }
-        }
+        Value *lane = axes_.at(a_axes_->get(rc, 1)).thread_id;
+        lane = builder_->CreateAdd(lane, builder_->CreateMul(builder_->getInt32(rrr),
+                                                             builder_->getInt32(out_layout->mts[1])));
+        indices_t read_idx = {idx[0], lane};
         out_dt->set_value(idx, tmp->get_value(read_idx));
         out_start++;
-      }, out_start, out_start + out_pack_size);
+      }, out_start, out_start + out_rpt);
     }
   }
 
