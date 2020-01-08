@@ -73,8 +73,10 @@ indices_t distributed_tile::get_ordered_indices(unsigned id) {
 }
 
 
-void distributed_tile::for_each(std::function<void (indices_t)> fn) {
-  for(unsigned i = 0; i < ordered_indices_.size(); i++){
+void distributed_tile::for_each(std::function<void (indices_t)> fn, int start, int end) {
+  if(end < 0)
+    end = ordered_indices_.size() + end + 1;
+  for(unsigned i = start; i < end; i++){
     if(i % vector_size_ == 0)
       fn(ordered_indices_[i]);
   }

@@ -7,7 +7,6 @@
 #include "triton/codegen/analysis/allocation.h"
 #include "triton/codegen/analysis/align.h"
 #include "triton/codegen/transform/coalesce.h"
-#include "triton/codegen/instructions.h"
 #include "triton/ir/context.h"
 #include "triton/ir/module.h"
 #include "triton/ir/function.h"
@@ -863,6 +862,81 @@ void generator::visit_select_inst(ir::select_inst* select) {
     Value *ret = builder_->CreateSelect(pred, if_value, else_value);
     set_value(select, idx, ret);
   });
+
+}
+
+void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
+  ir::value *op = rc->get_operand(0);
+  ir::tile_type::tile_shapes_t shapes = rc->get_type()->get_tile_shapes();
+  // temporary layout
+  shared_tile *tmp = (shared_tile*)machine_layouts_.at(layouts_->get(layouts_->tmp(rc)))
+                                   ->create(rc);
+  // pointer to temporary shared memory
+  Type *ty = llvm_type(rc->get_type()->get_scalar_ty(), *ctx_);
+  Value *ptr = builder_->CreateBitCast(sh_mem_ptr_, PointerType::get(ty, 3));
+  // layouts
+  const analysis::layout_t* in_layout = layouts_->get(op);
+  const analysis::layout_t* out_layout = layouts_->get(rc);
+  // machine tiles
+  distributed_tile *in_dt = (distributed_tile*)(tmap_.at(op));
+  distributed_tile *out_dt = (distributed_tile*)(tmap_.at(rc));
+  // num threads
+  int in_num_threads_0 = 4*in_layout->wpt[0]*in_layout->fpw[0];
+  int in_num_threads_1 = 4*in_layout->wpt[1]*in_layout->fpw[1];
+  int out_num_threads_0 = out_layout->mts[0];
+  int out_num_threads_1 = out_layout->mts[1];
+  // pack sizes
+  int ld = in_layout->order[0];
+  int nld = in_layout->order[1];
+  int in_pack_size = shapes[ld] / (4*in_layout->wpt[ld]*in_layout->fpw[ld]);
+  // copy to shared
+  int out_start = 0;
+  int in_start = 0;
+  for(int r = 0; r < 2; r++)
+  for(int rr = 0; rr < in_layout->fpw[0]; rr++){
+    in_dt->for_each([&](indices_t idx){
+      // shared memory
+      indices_t write_idx(idx.size());
+      for(size_t k = 0; k < write_idx.size(); k++){
+        if(k == ld)
+          write_idx[k] = idx[k];
+        else{
+          Value *lane = axes_.at(a_axes_->get(rc, k)).values[0];
+          lane = builder_->CreateAdd(builder_->CreateUDiv(lane, builder_->getInt32(2)),
+                                     builder_->CreateURem(lane, builder_->getInt32(2)));
+          write_idx[k] = lane;
+        }
+      }
+      Value *write_offset = shared_tile::shared_offset(*builder_, tmp->get_shapes(),
+                                                       tmp->get_perm(),
+                                                       tmp->get_order(), write_idx);
+      Value *write_ptr = builder_->CreateGEP(ptr, write_offset);
+      builder_->CreateStore(in_dt->get_value(idx), write_ptr);
+      in_start++;
+    }, in_start, in_start + in_pack_size);
+    // load from shared
+
+    int out_pack_size = shapes[ld] / out_layout->mts[ld];
+    int out_outer_size = shapes[nld] / out_layout->mts[nld];
+    int out_repeat_size = out_outer_size / (2 * in_layout->fpw[0]);
+    for(int rrr = 0; rrr < out_repeat_size; rrr++){
+      out_dt->for_each([&](indices_t idx){
+        indices_t read_idx(idx.size());
+        for(size_t k = 0; k < read_idx.size(); k++){
+          if(k==ld)
+            read_idx[k] = idx[k];
+          else{
+            Value *lane = axes_.at(a_axes_->get(rc, k)).thread_id;
+            lane = builder_->CreateAdd(lane, builder_->CreateMul(builder_->getInt32(rrr),
+                                                                 builder_->getInt32(out_layout->mts[k])));
+            read_idx[k] = lane;
+          }
+        }
+        out_dt->set_value(idx, tmp->get_value(read_idx));
+        out_start++;
+      }, out_start, out_start + out_pack_size);
+    }
+  }
 
 }
 

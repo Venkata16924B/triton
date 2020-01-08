@@ -4,7 +4,6 @@
 #include "triton/codegen/analysis/axes.h"
 #include "triton/codegen/analysis/align.h"
 #include "triton/codegen/analysis/layout.h"
-#include "triton/codegen/instructions.h"
 #include "triton/ir/function.h"
 #include "triton/ir/module.h"
 #include "triton/ir/utils.h"
@@ -271,8 +270,8 @@ void extract_double_bufferable(ir::value *v, std::shared_ptr<double_buffer_info_
   ir::instruction *i_0 = dynamic_cast<ir::instruction*>(value_0);
   ir::instruction *i_1 = dynamic_cast<ir::instruction*>(value_1);
   if(!i_0 || !i_1 ||
-     storage_info.at(i_0->get_id()).first != codegen::SHARED ||
-     storage_info.at(i_1->get_id()).first != codegen::SHARED)
+     !dynamic_cast<ir::copy_to_shared_inst*>(i_0) ||
+     !dynamic_cast<ir::copy_to_shared_inst*>(i_1) )
     return;
   if(is_latch_1)
     res.reset(new double_buffer_info_t{value_0, value_1, phi});
@@ -409,6 +408,23 @@ void layout::run(ir::module &mod) {
       // create layout
       layouts_[id] = new layout_shared_t(layout, axes_->get(arg), shapes, {red}, red->get_type()->get_scalar_ty(), id, align_);
       tmp_[red] = id;
+    }
+    if(auto *recoalasce = dynamic_cast<ir::recoalesce_inst*>(i)){
+      ir::value *val = recoalasce->get_operand(0);
+      const layout_t* layout = get(val);
+      if(layout->type != HMMA_884)
+        return;
+      id++;
+      ir::type::tile_shapes_t in_shape = val->get_type()->get_tile_shapes();
+      ir::type::tile_shapes_t shape(2);
+      size_t ld = layout->order[0];
+      shape[ld] = in_shape[ld];
+      for(size_t k = 0; k < in_shape.size(); k++)
+        if(k != ld)
+          shape[k] = 4*layout->fpw[k]*layout->wpt[k];
+      // create layout
+      layouts_[id] = new layout_shared_t(layout, axes_->get(val), shape, {recoalasce}, val->get_type()->get_scalar_ty(), id, align_);
+      tmp_[recoalasce] = id;
     }
   });
 }

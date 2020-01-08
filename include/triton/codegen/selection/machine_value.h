@@ -134,7 +134,7 @@ public:
   const std::vector<int>& get_order() { return order_; }
   unsigned get_linear_index(indices_t idx);
   indices_t get_ordered_indices(unsigned id);
-  void for_each(std::function<void(indices_t)> fn);
+  void for_each(std::function<void(indices_t)> fn, int start = 0, int end = -1);
   const distributed_axis &axis(unsigned dim) { return axes_.at(dim); }
 
 private:

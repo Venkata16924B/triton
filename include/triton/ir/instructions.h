@@ -732,6 +732,17 @@ public:
   _TRITON_DEFINE_ACCEPT(copy_from_shared_inst)
 };
 
+class recoalesce_inst: public unary_inst{
+private:
+  using unary_inst::unary_inst;
+  std::string repr_impl() const { return "recoalesce_inst"; }
+
+public:
+  static recoalesce_inst* create(value *arg, const std::string &name = "", instruction *next = nullptr);
+  _TRITON_DEFINE_CLONE(recoalesce_inst)
+  _TRITON_DEFINE_ACCEPT(recoalesce_inst)
+};
+
 class barrier_inst: public instruction{
 private:
   barrier_inst(context &ctx, const std::string &name, instruction *next);
