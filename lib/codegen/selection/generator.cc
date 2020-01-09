@@ -418,80 +418,80 @@ void generator::visit_unmasked_store_inst(ir::unmasked_store_inst* st) {
 
 void generator::visit_masked_store_inst(ir::masked_store_inst* st) {
   distributed_tile* ptrs = (distributed_tile*)tmap_.at(st->get_pointer_operand());
-  distributed_tile* scalars = (distributed_tile*)tmap_.at(st->get_value_operand());
-  ir::value *mask = st->get_mask_operand();
-  distributed_tile* preds = (distributed_tile*)tmap_.at(mask);
-
-//  std::map<unsigned, Value*> packets;
-//  ir::value *arg = st->get_value_operand();
-//  int vector_size = 2;
-//  for_each(arg, [&](indices_t idx){
-//    distributed_tile* in = (distributed_tile*)tmap_.at(arg);
-//    unsigned linear = in->get_linear_index(idx);
-//    unsigned id = linear / vector_size;
-//    Value *in_value = in->get_value(idx);
-//    if(linear % vector_size == 0)
-//      packets[id] = UndefValue::get(VectorType::get(in_value->getType(), vector_size));
-//    packets[id] = builder_->CreateInsertElement(packets.at(id), in_value, linear % vector_size);
-//  });
-
-//  for_each(arg, [&](indices_t idx){
-//    distributed_tile* in = (distributed_tile*)tmap_.at(arg);
-//    unsigned linear = in->get_linear_index(idx);
-//    unsigned id = linear / vector_size;
-//    if(linear % vector_size == 0){
-//      Value *scalar = packets[id];
-//      Value *ptr = ptrs->get_value(idx);
-//      Value *pred = preds->get_value(idx);
-
-//      Type *scaty = scalar->getType();
-//      unsigned nbits = scaty->getScalarSizeInBits();
-//      unsigned nbytes = nbits / 8;
-//      std::string suffix = nbits == 32 ? "f" : "h";
-//      std::string offset = "";
-//      if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
-//      if(gep->getNumIndices() == 1)
-//      if(ConstantInt *cst = dyn_cast<ConstantInt>(gep->idx_begin())){
-//        offset = " + " + std::to_string(cst->getValue().getSExtValue()*nbytes);
-//        ptr = gep->getPointerOperand();
-//      }
-//      ptr = builder_->CreateBitCast(ptr, scalar->getType()->getPointerTo(1));
-//      FunctionType *ty = FunctionType::get(builder_->getVoidTy(), {pred->getType(), ptr->getType(), builder_->getHalfTy(), builder_->getHalfTy()}, false);
-//      std::string asm_str = "@$0 st.global.v2.b" + std::to_string(nbits) + " [$1" + offset + "], {$2, $3};";
-//      InlineAsm *iasm = InlineAsm::get(ty, asm_str, "b,l," + suffix + "," + suffix, true);
-//      builder_->CreateCall(iasm, {pred, ptr, builder_->CreateExtractElement(scalar, builder_->getInt32(0)), builder_->CreateExtractElement(scalar, builder_->getInt32(1))});
-//    }
-//  });
-
-
-  ptrs->for_each([&](indices_t idx){
-    Value *scalar = scalars->get_value(idx);
-    Value *ptr = ptrs->get_value(idx);
-    Value *pred = preds->get_value(idx);
-//    Function *parent = builder_->GetInsertBlock()->getParent();
-//    BasicBlock *mask_then_bb = BasicBlock::Create(*ctx_, "mask_then", parent);
-//    BasicBlock *mask_done_bb = BasicBlock::Create(*ctx_, "mask_done", parent);
-//    builder_->CreateCondBr(pred, mask_then_bb, mask_done_bb);
-//    builder_->SetInsertPoint(mask_then_bb);
-//    builder_->CreateStore(scalar, ptr);
-//    builder_->CreateBr(mask_done_bb);
-//    builder_->SetInsertPoint(mask_done_bb);
-
-    Type *scaty = scalar->getType();
-    unsigned nbits = scaty->getScalarSizeInBits();
-    unsigned nbytes = nbits / 8;
-    std::string suffix = nbits == 32 ? "f" : "h";
-    std::string offset = "";
-    if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
-    if(gep->getNumIndices() == 1)
-    if(ConstantInt *cst = dyn_cast<ConstantInt>(gep->idx_begin())){
-      offset = " + " + std::to_string(cst->getValue().getSExtValue()*nbytes);
-      ptr = gep->getPointerOperand();
+  distributed_tile* masks = (distributed_tile*)tmap_.at(st->get_mask_operand());
+  // vector size
+  int vector_size = 2;
+  // create packets
+  std::map<unsigned, Value*> packets;
+  ir::value *arg = st->get_value_operand();
+  for_each(arg, [&](indices_t idx){
+    distributed_tile* in = (distributed_tile*)tmap_.at(arg);
+    unsigned linear = in->get_linear_index(idx);
+    unsigned id = linear / vector_size;
+    Value *in_value = in->get_value(idx);
+    if(linear % vector_size == 0)
+      packets[id] = UndefValue::get(VectorType::get(in_value->getType(), vector_size));
+    packets[id] = builder_->CreateInsertElement(packets.at(id), in_value, linear % vector_size);
+  });
+  // write-back packets
+  for_each(arg, [&](indices_t idx){
+    distributed_tile* in = (distributed_tile*)tmap_.at(arg);
+    unsigned linear = in->get_linear_index(idx);
+    unsigned id = linear / vector_size;
+    if(linear % vector_size == 0){
+      // fetch tile elements
+      Value *elt = packets[id];
+      Value *ptr = ptrs->get_value(idx);
+      Value *pred = masks->get_value(idx);
+      // type information
+      Type *ty = elt->getType();
+      unsigned nbits = ty->getScalarSizeInBits();
+      unsigned nbytes = nbits / 8;
+      // extract pointer offset
+      std::string offset = "";
+      if(GetElementPtrInst *gep = dyn_cast<GetElementPtrInst>(ptr))
+      if(gep->getNumIndices() == 1)
+      if(ConstantInt *cst = dyn_cast<ConstantInt>(gep->idx_begin())){
+        offset = " + " + std::to_string(cst->getValue().getSExtValue()*nbytes);
+        ptr = gep->getPointerOperand();
+      }
+      ptr = builder_->CreateBitCast(ptr, ty->getPointerTo(1));
+      // asm argument type
+      std::vector<Type*> arg_ty = {pred->getType(), ptr->getType()};
+      for(int v = 0; v < vector_size; v++)
+        arg_ty.push_back(ty->getScalarType());
+      // asm function type
+      FunctionType *fn_ty = FunctionType::get(builder_->getVoidTy(), arg_ty, false);
+      // asm string
+      std::string asm_str;
+      asm_str += "@$0 st.global";
+      if(vector_size > 1)
+        asm_str += ".v" + std::to_string(vector_size);
+      asm_str += ".b" + std::to_string(nbits) + " [$1" + offset + "],";
+      if(vector_size > 1)
+        asm_str += "{";
+      for(int v = 0; v < vector_size; v++){
+        if(v > 0)
+          asm_str += ", ";
+        asm_str += "$" + std::to_string(2 + v);
+      }
+      if(vector_size > 1)
+        asm_str += "}";
+      asm_str += ";";
+      // asm constraint
+      std::string constraint = "b,l";
+      for(int v = 0; v < vector_size; v++){
+        constraint += ",";
+        constraint += (nbits == 32 ? "r" : "h");
+      }
+      // create inline asm
+      InlineAsm *iasm = InlineAsm::get(fn_ty, asm_str, constraint, true);
+      // call asm
+      std::vector<Value*> args = {pred, ptr};
+      for(int v = 0; v < vector_size; v++)
+        args.push_back(builder_->CreateExtractElement(elt, builder_->getInt32(v)));
+      builder_->CreateCall(iasm, args);
     }
-    FunctionType *ty = FunctionType::get(builder_->getVoidTy(), {pred->getType(), ptr->getType(), scalar->getType()}, false);
-    std::string asm_str = "@$0 st.global.b" + std::to_string(nbits) + " [$1" + offset + "], $2;";
-    InlineAsm *iasm = InlineAsm::get(ty, asm_str, "b,l," + suffix, true);
-    builder_->CreateCall(iasm, {pred, ptr, scalar});
   });
 }
 
