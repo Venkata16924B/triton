@@ -420,7 +420,10 @@ void generator::visit_masked_store_inst(ir::masked_store_inst* st) {
   distributed_tile* ptrs = (distributed_tile*)tmap_.at(st->get_pointer_operand());
   distributed_tile* masks = (distributed_tile*)tmap_.at(st->get_mask_operand());
   // vector size
-  int vector_size = 2;
+  int vector_size = 1;
+  int ld = ptrs->get_order()[0];
+  unsigned alignment = alignment_->get(st->get_pointer_operand(), ld);
+  vector_size = std::min<unsigned>(ptrs->axis(ld).contiguous, alignment);
   // create packets
   std::map<unsigned, Value*> packets;
   ir::value *arg = st->get_value_operand();

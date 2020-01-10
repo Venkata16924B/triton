@@ -61,21 +61,21 @@ ir::value* coalesce::rematerialize(ir::value *x, ir::builder &builder,
 }
 
 void coalesce::run(ir::module &mod) {
-//  // re-coalesce wmma stores
-//  for(ir::function *fn: mod.get_function_list())
-//  for(ir::basic_block *block: fn->blocks())
-//  for(ir::instruction *i: block->get_inst_list())
-//    if(ir::store_inst* st = dynamic_cast<ir::store_inst*>(i)){
-//      ir::builder& builder = mod.get_builder();
-//      builder.set_insert_point(st);
-//      ir::value *value = st->get_value_operand();
-//      const analysis::layout_t* layout = layout_->get(value);
-//      if(layout->type == analysis::HMMA_884){
-//        ir::recoalesce_inst* rc = ir::recoalesce_inst::create(value);
-//        builder.insert(rc);
-//        st->replace_uses_of_with(value, rc);
-//      }
-//    }
+  // re-coalesce wmma stores
+  for(ir::function *fn: mod.get_function_list())
+  for(ir::basic_block *block: fn->blocks())
+  for(ir::instruction *i: block->get_inst_list())
+    if(ir::store_inst* st = dynamic_cast<ir::store_inst*>(i)){
+      ir::builder& builder = mod.get_builder();
+      builder.set_insert_point(st);
+      ir::value *value = st->get_value_operand();
+      const analysis::layout_t* layout = layout_->get(value);
+      if(layout->type == analysis::HMMA_884){
+        ir::recoalesce_inst* rc = ir::recoalesce_inst::create(value);
+        builder.insert(rc);
+        st->replace_uses_of_with(value, rc);
+      }
+    }
 
   // find values to rematerialize
   size_t num_groups = layout_->num_layouts();

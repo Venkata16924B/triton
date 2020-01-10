@@ -4,12 +4,12 @@ namespace src {
 R"(
 __global__ void dot(TYPE * A __noalias __readonly __aligned(16),
                     TYPE * B __noalias __readonly __aligned(16),
-                    TYPE * C,
+                    TYPE * C __noalias __aligned(16),
                     float alpha,
                     int M, int N, int K,
                     int lda __multipleof(8),
                     int ldb __multipleof(8),
-                    int ldc) {
+                    int ldc __multipleof(8)) {
       // prologue
       int ridx = get_program_id(0);
       int ridy = get_program_id(1);
