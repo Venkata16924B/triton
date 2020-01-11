@@ -169,7 +169,6 @@ layout_hmma_884_t::layout_hmma_884_t(size_t num_warps,
                                      const std::vector<unsigned>& _shapes,
                                      const std::vector<ir::value *> &values, ir::type *_ty, size_t _id,
                                      analysis::align* align): layout_t(HMMA_884, _axes, _shapes, values, _ty, _id, align) {
-
   unsigned shape_0 = shapes[0];
   unsigned shape_1 = shapes[1];
   /* fragments per warp */
@@ -411,19 +410,20 @@ void layout::run(ir::module &mod) {
     }
     if(auto *recoalasce = dynamic_cast<ir::recoalesce_inst*>(i)){
       ir::value *val = recoalasce->get_operand(0);
-      const layout_t* layout = get(val);
-      if(layout->type != HMMA_884)
+      const layout_t* in_layout = get(val);
+      const layout_t* out_layout = get(i);
+      if(in_layout->type != HMMA_884)
         return;
       id++;
       ir::type::tile_shapes_t in_shape = val->get_type()->get_tile_shapes();
       ir::type::tile_shapes_t shape(2);
-      size_t ld = layout->order[0];
+      size_t ld = out_layout->order[0];
       shape[ld] = in_shape[ld];
       for(size_t k = 0; k < in_shape.size(); k++)
         if(k != ld)
-          shape[k] = 4*layout->fpw[k]*layout->wpt[k];
+          shape[k] = 4*in_layout->fpw[k]*in_layout->wpt[k];
       // create layout
-      layouts_[id] = new layout_shared_t(layout, axes_->get(val), shape, {recoalasce}, val->get_type()->get_scalar_ty(), id, align_);
+      layouts_[id] = new layout_shared_t(out_layout, axes_->get(val), shape, {recoalasce}, val->get_type()->get_scalar_ty(), id, align_);
       tmp_[recoalasce] = id;
     }
   });
