@@ -913,7 +913,8 @@ void generator::visit_select_inst(ir::select_inst* select) {
 
 void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
   ir::value *op = rc->get_operand(0);
-  ir::tile_type::tile_shapes_t shapes = rc->get_type()->get_tile_shapes();
+  ir::tile_type::tile_shapes_t shape = rc->get_type()->get_tile_shapes();
+  size_t rank = shape.size();
   // temporary layout
   shared_tile *tmp = (shared_tile*)machine_layouts_.at(layouts_->get(layouts_->tmp(rc)))
                                    ->create(rc);
@@ -926,55 +927,89 @@ void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
   distributed_tile *in_dt = (distributed_tile*)(tmap_.at(op));
   distributed_tile *out_dt = (distributed_tile*)(tmap_.at(rc));
   // WMMA configuration
-  long wmma_pt[2] = { 2, 4 };
-  long wmma[2] = { 8*in_layout->wpt[0]*in_layout->fpw[0],
-                   8*in_layout->wpt[1]*in_layout->fpw[1] };
+  long wmma_pt[3] = { 2, 4, 1};
+  long wmma[3] = { 8*in_layout->wpt[0]*in_layout->fpw[0],
+                   8*in_layout->wpt[1]*in_layout->fpw[1],
+                   1};
   // Work per thread for input  layout
-  long in_pt[2]  = { shapes[0] / wmma[0],
-                     shapes[1] / wmma[1] };
+  long in_pt[3]  = { shape[0] / wmma[0],
+                     shape[1] / wmma[1],
+                     1 };
   // Work per thread for output layout
-  long out_pt[2] = { shapes[0] / out_layout->mts[0],
-                     shapes[1] / out_layout->mts[1]};
+  long out_pt[3] = { shape[0] / out_layout->mts[0],
+                     shape[1] / out_layout->mts[1],
+                     1 };
+  if(rank > 2){
+    wmma[2] = in_layout->wpt[2]*in_layout->fpw[2];
+    in_pt[2] = shape[2] / wmma[2];
+    out_pt[2] = shape[2] / out_layout->mts[2];
+  }
   // Orders
   auto ord = out_layout->order;
+  if(ord.size() < 3)
+    ord.push_back(2);
   // pointer lanes
-  std::vector<Value*> ptrs(wmma_pt[ord[1]]);
-  for(int in_cc = 0; in_cc < wmma_pt[ord[1]]; in_cc++) {
-    Value *base = builder_->CreateBitCast(sh_mem_ptr_, PointerType::get(ty, 3));
-    Value *stride = builder_->getInt32(tmp->get_shapes()[ord[0]]);
-    Value *idx = axes_.at(a_axes_->get(op, ord[1])).values[in_cc];
-    Value *off = builder_->CreateMul(stride, idx);
-    ptrs[in_cc] = builder_->CreateGEP(base, off);
+  std::vector<std::vector<Value*>> ptrs;
+  for(int in_zz = 0; in_zz < wmma_pt[ord[2]]; in_zz++) {
+    std::vector<Value*> current;
+    for(int in_cc = 0; in_cc < wmma_pt[ord[1]]; in_cc++) {
+      Value *base = builder_->CreateBitCast(sh_mem_ptr_, PointerType::get(ty, 3));
+      // shared memory stride
+      Value *stride_0 = builder_->getInt32(tmp->get_shapes()[ord[0]]);
+      // indices
+      Value *idx_cc = axes_.at(a_axes_->get(op, ord[1])).values[in_cc];
+      // offset
+      Value *off = builder_->CreateMul(stride_0, idx_cc);
+      if(rank > 2){
+        Value *stride_1 = builder_->CreateMul(stride_0,
+                                              builder_->getInt32(tmp->get_shapes()[ord[1]]));
+        Value *idx_zz = axes_.at(a_axes_->get(op, ord[2])).values[in_zz];
+        off = builder_->CreateAdd(off, builder_->CreateMul(stride_1, idx_zz));
+      }
+      current.push_back(builder_->CreateGEP(base, off));
+    }
+    ptrs.push_back(current);
   }
   int in_outer = 0;
   int out_outer = 0;
   // Re-coalesce loops
+  for(int in_z = 0; in_z < in_pt[ord[2]]; in_z++)
   for(int in_c = 0; in_c < in_pt[ord[1]]; in_c++){
     // write to shared
     tgt_->add_barrier(mod_, *builder_);
     for(int in_cc = 0; in_cc < wmma_pt[ord[1]]; in_cc++){
-      std::vector<int> starts(2), len(2);
+      std::vector<int> starts(rank), len(rank);
       starts[ord[0]] = 0;
       starts[ord[1]] = in_outer++;
       len[ord[0]] = wmma_pt[ord[0]]*in_pt[ord[0]];
       len[ord[1]] = 1;
+      if(rank > 2){
+        starts[ord[2]] = 0;
+        len[ord[2]] = 1;
+      }
       in_dt->for_each([&](indices_t idx){
-        Value *write_ptr = builder_->CreateGEP(ptrs[in_cc], idx[ord[0]]);
+        Value *write_ptr = builder_->CreateGEP(ptrs[in_z][in_cc], idx[ord[0]]);
         builder_->CreateStore(in_dt->get_value(idx), write_ptr);
       }, starts, len);
     }
     tgt_->add_barrier(mod_, *builder_);
     // load from shared
     for(int out_c = 0; out_c < out_pt[ord[1]] / in_pt[ord[1]]; out_c++){
-      std::vector<int> starts(2), len(2);
+      std::vector<int> starts(rank), len(rank);
       starts[ord[0]] = 0;
       starts[ord[1]] = out_outer++;
       len[ord[0]] = out_pt[ord[0]];
       len[ord[1]] = 1;
+      if(rank > 2){
+        starts[ord[2]] = 0;
+        len[ord[2]] = 1;
+      }
       out_dt->for_each([&](indices_t idx){
-        indices_t read_idx(2);
+        indices_t read_idx(rank);
         read_idx[ord[0]] = idx[ord[0]];
         read_idx[ord[1]] = axes_.at(a_axes_->get(rc, ord[1])).values[out_c];
+        if(rank > 2)
+          read_idx[ord[2]] = axes_.at(a_axes_->get(rc, ord[2])).values[0];
         out_dt->set_value(idx, tmp->get_value(read_idx));
       }, starts, len);
     }

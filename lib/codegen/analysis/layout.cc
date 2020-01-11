@@ -416,7 +416,7 @@ void layout::run(ir::module &mod) {
         return;
       id++;
       ir::type::tile_shapes_t in_shape = val->get_type()->get_tile_shapes();
-      ir::type::tile_shapes_t shape(2);
+      ir::type::tile_shapes_t shape(in_shape.size());
       size_t ld = out_layout->order[0];
       shape[ld] = in_shape[ld];
       for(size_t k = 0; k < in_shape.size(); k++)
