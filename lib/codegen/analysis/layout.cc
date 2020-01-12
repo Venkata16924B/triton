@@ -218,8 +218,10 @@ layout_scanline_t::layout_scanline_t(size_t num_warps,
   mts.resize(shapes.size());
   bool is_dot = std::any_of(values.begin(), values.end(),
                             [&](ir::value* v) { return dynamic_cast<ir::dot_inst*>(v); });
+  bool is_recoalesce = std::any_of(values.begin(), values.end(),
+                            [&](ir::value* v) { return dynamic_cast<ir::recoalesce_inst*>(v); });
   unsigned i = order[0];
-  nts[i] = clamp(size / num_threads, 1, std::min<int>(4, shapes[i]));
+  nts[i] = clamp(size / num_threads, 1, std::min<int>(is_recoalesce?1:4, shapes[i]));
   mts[i] = clamp(num_threads, 1, shapes[i] / nts[i]);
   size /= shapes[i];
   num_threads /= mts[i];

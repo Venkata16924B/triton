@@ -547,7 +547,7 @@ __global__ void {name}(
             TZ = [x for x in [1, 2, 4, 8, 16, 32] \
                     if x < MAX_GZ and x*MIN_GM*MIN_GN*MIN_GB < 256]
             TZ = [1] if not TZ else [TZ[-1], TZ[-1]*2]
-            TM, TN, TB, TZ = [128], [128], [1], [1]
+            #TM, TN, TB, TZ = [128], [128], [1], [1]
             self.macros = {  'TM': TM, 'TN': TN, 'TB': TB, 'TK': TK, 'TZ': TZ, 'TYPE': dtype }
             self.dtype = dtype
             self.flops = 2 * B * M * N * K
