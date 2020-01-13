@@ -160,7 +160,6 @@ private:
   analysis::align *alignment_;
   analysis::allocation *alloc_;
   Value *sh_mem_ptr_;
-  Value *atom_ptr_;
   unsigned num_warps_;
 
   std::set<ir::value*> seen_;

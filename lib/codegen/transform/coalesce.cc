@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <iostream>
 #include "triton/ir/utils.h"
 #include "triton/ir/instructions.h"
 #include "triton/ir/function.h"
@@ -61,24 +62,43 @@ ir::value* coalesce::rematerialize(ir::value *x, ir::builder &builder,
 }
 
 void coalesce::run(ir::module &mod) {
-  // re-coalesce wmma stores
-  for(ir::function *fn: mod.get_function_list())
-  for(ir::basic_block *block: fn->blocks())
-  for(ir::instruction *i: block->get_inst_list())
-    if(ir::store_inst* st = dynamic_cast<ir::store_inst*>(i)){
-      ir::builder& builder = mod.get_builder();
-      builder.set_insert_point(st);
-      ir::value *value = st->get_value_operand();
-      const analysis::layout_t* layout = layout_->get(value);
-      if(layout->type == analysis::HMMA_884){
-        ir::recoalesce_inst* rc = ir::recoalesce_inst::create(value);
+  size_t num_groups = layout_->num_layouts();
+
+  for(size_t id = 0; id < num_groups; id++) {
+    if(layout_->get(id)->type != analysis::HMMA_884)
+      continue;
+    // extract memory stores
+    const auto& values = layout_->values_of(id);
+    ir::value* dot = nullptr;
+    for(ir::value *v: values)
+      if(auto x = dynamic_cast<ir::dot_inst*>(v))
+        dot = x;
+
+    ir::builder& builder = mod.get_builder();
+    std::vector<ir::value*> worklist = {dot};
+    std::set<ir::value*> seen;
+    while(!worklist.empty()) {
+      ir::value *current = worklist.back();
+      seen.insert(current);
+      worklist.pop_back();
+      // stop if trunc
+      if(auto x = dynamic_cast<ir::fp_trunc_inst*>(current)){
+        builder.set_insert_point_after(x);
+        ir::recoalesce_inst* rc = ir::recoalesce_inst::create(x);
         builder.insert(rc);
-        st->replace_uses_of_with(value, rc);
+        x->replace_all_uses_with(rc);
+        rc->replace_uses_of_with(rc, x);
+        break;
       }
+      // recurse
+      for(ir::user *u: current->get_users())
+        if(seen.find(u) == seen.end())
+          worklist.push_back(u);
     }
+  }
+
 
   // find values to rematerialize
-  size_t num_groups = layout_->num_layouts();
   std::vector<ir::io_inst*> remat;
   for(size_t id = 0; id < num_groups; id++) {
     const auto& values = layout_->values_of(id);

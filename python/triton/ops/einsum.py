@@ -261,7 +261,7 @@ __global__ void {name}(
         a = *?(checka)pa;
         b = *?(checkb)pb;
     }}
-    acc = acc * alpha;
+    TYPE c[TM, TN, TB] = acc;
 
     // re-materialize ranges
 """
@@ -294,7 +294,6 @@ __global__ void {name}(
                               checkn[newaxis, :, newaxis];
 
     // write back
-    TYPE c[TM, TN, TB] = acc;
 #if TZ == 1
     *?(checkc)pc = c;
 #else
@@ -331,7 +330,7 @@ __global__ void {name}(
         DRAM = 3
     
     def lut_mode(delta):
-        if np.min(delta) == np.max(delta):
+        if delta.size == 0 or np.min(delta) == np.max(delta):
             return _einsum.LUT_MODE.SCALAR
         #if delta.size < 4096:
         #    return _einsum.LUT_MODE.CONSTANT
@@ -547,6 +546,7 @@ __global__ void {name}(
             TZ = [x for x in [1, 2, 4, 8, 16, 32] \
                     if x < MAX_GZ and x*MIN_GM*MIN_GN*MIN_GB < 256]
             TZ = [1] if not TZ else [TZ[-1], TZ[-1]*2]
+            #TB, TZ = [1], [1]
             #TM, TN, TB, TZ = [128], [128], [1], [1]
             self.macros = {  'TM': TM, 'TN': TN, 'TB': TB, 'TK': TK, 'TZ': TZ, 'TYPE': dtype }
             self.dtype = dtype

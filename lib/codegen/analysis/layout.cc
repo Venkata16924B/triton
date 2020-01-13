@@ -218,10 +218,19 @@ layout_scanline_t::layout_scanline_t(size_t num_warps,
   mts.resize(shapes.size());
   bool is_dot = std::any_of(values.begin(), values.end(),
                             [&](ir::value* v) { return dynamic_cast<ir::dot_inst*>(v); });
-  bool is_recoalesce = std::any_of(values.begin(), values.end(),
-                            [&](ir::value* v) { return dynamic_cast<ir::recoalesce_inst*>(v); });
+
+  ir::value *ptr = nullptr;
+  for(ir::value *v: values)
+    for(ir::user *usr: v->get_users())
+      if(auto *st = dynamic_cast<ir::store_inst*>(usr))
+        ptr = st->get_pointer_operand();
+
   unsigned i = order[0];
-  nts[i] = clamp(size / num_threads, 1, std::min<int>(is_recoalesce?1:4, shapes[i]));
+  int contiguous = 4;
+  if(ptr)
+    contiguous = std::min<int>(align->contiguous(ptr)[i], 4);
+
+  nts[i] = clamp(size / num_threads, 1, std::min<int>(contiguous, shapes[i]));
   mts[i] = clamp(num_threads, 1, shapes[i] / nts[i]);
   size /= shapes[i];
   num_threads /= mts[i];
@@ -296,10 +305,9 @@ layout_shared_t::layout_shared_t(const layout_t *arg,
     extract_double_bufferable(v, double_buffer);
 
   // order
-  if(arg->type == SCANLINE)
-    order = arg->order;
-  else
-    order = arg->order;
+  std::vector<int> arg_order = arg ? arg->order : std::vector<int>{0};
+  order = arg_order;
+
   ir::value* dot_a = nullptr;
   ir::value* dot_b = nullptr;
   ir::value* hmma_dot_a = nullptr;
@@ -336,7 +344,7 @@ layout_shared_t::layout_shared_t(const layout_t *arg,
     bool row = is_trans(hmma_dot_b) ^ order[0] != 0;
     pad = 24 - shapes[row ? 1 : 0] % 32;
   }
-  else if(order != arg->order) {
+  else if(order != arg_order) {
     pad = 4;
   }
   shapes[order[0]] += pad;
@@ -427,6 +435,11 @@ void layout::run(ir::module &mod) {
       // create layout
       layouts_[id] = new layout_shared_t(out_layout, axes_->get(val), shape, {recoalasce}, val->get_type()->get_scalar_ty(), id, align_);
       tmp_[recoalasce] = id;
+    }
+    if(auto *atom = dynamic_cast<ir::atomic_cas_inst*>(i)){
+      id++;
+      layouts_[id] = new layout_shared_t(nullptr, {}, {1}, {atom}, atom->get_type()->get_scalar_ty(), id, align_);
+      tmp_[atom] = id;
     }
   });
 }

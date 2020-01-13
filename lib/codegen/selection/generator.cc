@@ -565,12 +565,16 @@ void generator::visit_atomic_cas_inst(ir::atomic_cas_inst* cas) {
                                              AtomicOrdering::Monotonic,
                                              AtomicOrdering::Monotonic);
   old = builder_->CreateExtractValue(old, {0});
-  builder_->CreateStore(old, atom_ptr_);
+  Value *atom_ptr;
+  atom_ptr = builder_->CreateGEP(sh_mem_ptr_, builder_->getInt32(alloc_->offset(layouts_->get(layouts_->tmp(cas)))));
+  atom_ptr = builder_->CreateBitCast(atom_ptr, PointerType::get(old->getType(), 3));
+
+  builder_->CreateStore(old, atom_ptr);
   builder_->CreateBr(tid_0_done_bb);
   builder_->SetInsertPoint(tid_0_done_bb);
   tgt_->add_memfence(module, *builder_);
   tgt_->add_barrier(module, *builder_);
-  vmap_[cas] = builder_->CreateLoad(atom_ptr_);
+  vmap_[cas] = builder_->CreateLoad(atom_ptr);
 }
 
 void generator::visit_atomic_exch_inst(ir::atomic_exch_inst* xchg) {
@@ -953,7 +957,10 @@ void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
   for(int in_zz = 0; in_zz < wmma_pt[ord[2]]; in_zz++) {
     std::vector<Value*> current;
     for(int in_cc = 0; in_cc < wmma_pt[ord[1]]; in_cc++) {
-      Value *base = builder_->CreateBitCast(sh_mem_ptr_, PointerType::get(ty, 3));
+      Value *base;
+      base = builder_->CreateGEP(sh_mem_ptr_, builder_->getInt32(alloc_->offset(layouts_->get(layouts_->tmp(rc)))));
+      base = builder_->CreateBitCast(base, PointerType::get(ty, 3));
+
       // shared memory stride
       Value *stride_0 = builder_->getInt32(tmp->get_shapes()[ord[0]]);
       // indices
@@ -970,52 +977,51 @@ void generator::visit_recoalesce_inst(ir::recoalesce_inst* rc) {
     }
     ptrs.push_back(current);
   }
-  int in_outer = 0;
-  int out_outer = 0;
   // Re-coalesce loops
   for(int in_z = 0; in_z < in_pt[ord[2]]; in_z++)
   for(int in_c = 0; in_c < in_pt[ord[1]]; in_c++){
     // write to shared
     tgt_->add_barrier(mod_, *builder_);
+    for(int in_zz = 0; in_zz < wmma_pt[ord[2]]; in_zz++)
     for(int in_cc = 0; in_cc < wmma_pt[ord[1]]; in_cc++){
       std::vector<int> starts(rank), len(rank);
       starts[ord[0]] = 0;
-      starts[ord[1]] = in_outer++;
+      starts[ord[1]] = in_c*wmma_pt[ord[1]] + in_cc;
       len[ord[0]] = wmma_pt[ord[0]]*in_pt[ord[0]];
       len[ord[1]] = 1;
       if(rank > 2){
-        starts[ord[2]] = 0;
+        starts[ord[2]] = in_z*wmma_pt[ord[2]] + in_zz;
         len[ord[2]] = 1;
       }
       in_dt->for_each([&](indices_t idx){
-        Value *write_ptr = builder_->CreateGEP(ptrs[in_z][in_cc], idx[ord[0]]);
+        Value *write_ptr = builder_->CreateGEP(ptrs[in_zz][in_cc], idx[ord[0]]);
         builder_->CreateStore(in_dt->get_value(idx), write_ptr);
       }, starts, len);
     }
     tgt_->add_barrier(mod_, *builder_);
     // load from shared
-    for(int out_c = 0; out_c < out_pt[ord[1]] / in_pt[ord[1]]; out_c++){
+    for(int out_zz = 0; out_zz < out_pt[ord[2]] / in_pt[ord[2]]; out_zz++)
+    for(int out_cc = 0; out_cc < out_pt[ord[1]] / in_pt[ord[1]]; out_cc++){
       std::vector<int> starts(rank), len(rank);
       starts[ord[0]] = 0;
-      starts[ord[1]] = out_outer++;
+      starts[ord[1]] = in_c*(out_pt[ord[1]] / in_pt[ord[1]]) + out_cc;
       len[ord[0]] = out_pt[ord[0]];
       len[ord[1]] = 1;
       if(rank > 2){
-        starts[ord[2]] = 0;
+        starts[ord[2]] = in_z*(out_pt[ord[2]] / in_pt[ord[2]]) + out_zz;
         len[ord[2]] = 1;
       }
       out_dt->for_each([&](indices_t idx){
         indices_t read_idx(rank);
         read_idx[ord[0]] = idx[ord[0]];
-        read_idx[ord[1]] = axes_.at(a_axes_->get(rc, ord[1])).values[out_c];
+        read_idx[ord[1]] = axes_.at(a_axes_->get(rc, ord[1])).values[out_cc];
         if(rank > 2)
-          read_idx[ord[2]] = axes_.at(a_axes_->get(rc, ord[2])).values[0];
+          read_idx[ord[2]] = axes_.at(a_axes_->get(rc, ord[2])).values[out_zz];
         out_dt->set_value(idx, tmp->get_value(read_idx));
       }, starts, len);
     }
   }
   tgt_->add_barrier(mod_, *builder_);
-
 }
 
 void generator::visit_copy_to_shared_inst(ir::copy_to_shared_inst* cts) {
@@ -1290,10 +1296,6 @@ void generator::visit(ir::module &src, llvm::Module &dst) {
       new GlobalVariable(*mod_, array_ty, false, GlobalVariable::ExternalLinkage,
                          nullptr, "__shared_ptr", nullptr, GlobalVariable::NotThreadLocal, 3);
     sh_mem_ptr_ = builder_->CreateBitCast(sh_mem_array, ptr_ty);
-    GlobalVariable *_atom_ptr =
-      new GlobalVariable(*mod_, ArrayType::get(int_32_ty, 1), false, GlobalVariable::ExternalLinkage,
-                         nullptr, "__atom_ptr", nullptr, GlobalVariable::NotThreadLocal, 3);
-    atom_ptr_ = builder_->CreateBitCast(_atom_ptr, PointerType::get(int_32_ty, 3));
   }
   // visit functions
   for(ir::function *fn: src.get_function_list())
