@@ -447,6 +447,32 @@ __global__ void {name}(
         locks = None
         kernel_cache = dict()
 
+        @staticmethod
+        def _tile(M, N, B, TMs, TNs, TBs, TZs, TK):
+            smp = 15
+            # occupancy estimation
+            grid = lambda TM, TN, TB, TZ:   \
+                        triton.cdiv(M, TM)* \
+                        triton.cdiv(N, TN)* \
+                        triton.cdiv(B, TB)* \
+                        TZ
+            occupancy = lambda TM, TN, TB, TZ: \
+                           min(grid(TM, TN, TB, TZ), 4*smp)
+            # arithmetic intensity estimation
+            intensity = lambda TM, TN: \
+                           TM * TN * TK / (TM*TK + TK*TN)
+            # occupancy/intensity for all configurations
+            estimates = {(TM, TN, TB, TZ): (occupancy(TM, TN, TB, TZ), intensity(TM, TN)) \
+                        for TM in TMs \
+                        for TN in TNs \
+                        for TB in TBs \
+                        for TZ in TZs }
+            # returns configuration that maximizes occupancy subject to maximizing intensity
+            estimates = sorted(estimates.items(), 
+                               key=lambda item: item[1], 
+                               reverse=True)
+            return estimates[0][0]
+
         def __init__(self, einsum, dtype, stride_a, stride_b, stride_c, shape_a, shape_b, shape_c, arrays):
             # parse symbols
             expr_a, expr_bc = einsum.split(",")
@@ -535,19 +561,15 @@ __global__ void {name}(
             self.pos_a = 0
             self.pos_b = 1
             self.pos_c = 2
-            # pre-processor macros
-            TM = [16] + [x for x in [32, 64, 128] if x <= M]
-            TN = [16] + [x for x in [32, 64, 128] if x <= N]
-            TB = [x for x in [1, 2, 4] if x <= B]
-            MAX_GZ = K // 2048
-            MIN_GM = M // max(TM)
-            MIN_GN = N // max(TN)
-            MIN_GB = B // max(TB)
-            TZ = [x for x in [1, 2, 4, 8, 16, 32] \
-                    if x < MAX_GZ and x*MIN_GM*MIN_GN*MIN_GB < 256]
-            TZ = [1] if not TZ else [TZ[-1], TZ[-1]*2]
-            #TM, TN, TB = [128], [64], [1]
-            #print(TM, TN, TB)
+            # tile size ranges
+            MAX_GZ = triton.cdiv(K, 2048)
+            TMs = [16] + [x for x in [32, 64, 128] if x <= M]
+            TNs = [16] + [x for x in [32, 64, 128] if x <= N]
+            TBs = [x for x in [1, 2, 4, 8] if x <= B]
+            TZs = [x for x in [1, 2, 4, 8, 16, 32] if x <= MAX_GZ]
+            # tile sizes
+            TM, TN, TB, TZ = _einsum.instance._tile(M, N, B, TMs, TNs, TBs, TZs, TK)
+            print(TM, TN, TB, TZ)
             self.macros = {  'TM': TM, 'TN': TN, 'TB': TB, 'TK': TK, 'TZ': TZ, 'TYPE': dtype }
             self.dtype = dtype
             self.flops = 2 * B * M * N * K

@@ -11,7 +11,7 @@ configs = []
 
 # Matrix multiplication
 MNK = [
-        # (512, 512 ,512), 
+        (512, 512 ,512), 
         # (2048, 2048, 2048),
         # (8192, 8192, 8192),
        
@@ -195,3 +195,4 @@ for a_shape, b_shape, c_shape, torch_fn, expr, arrays in configs:
     bench = 2. * B * M * N * K / triton.bench_registry[tc] * 1e-3
     diff = (tc - rc).abs().max() / rc.abs().max()
     print(f'{expr:>15}; {str(a_shape):>20}; {str(b_shape):>20};          {bench:4.2f} {cmp_str};          {diff:4.2f}')
+    exit()
